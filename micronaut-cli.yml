@@ -1,0 +1,6 @@
+applicationType: cli
+defaultPackage: com.github
+testFramework: junit
+sourceLanguage: kotlin
+buildTool: gradle_kotlin
+features: [app-name, graalvm, gradle, http-client-test, junit, kapt, kotlin, logback, micronaut-build, picocli, picocli-junit, picocli-kotlin-application, properties, readme, serialization-jackson, shade]
