@@ -1,0 +1,24 @@
+{
+  "name": "schemata",
+  "description": "Schemata is a powerful and versatile Interface Definition Language (IDL) generator that allows users to define abstract data models and transform them into various target schemas, such as XSD, AVDL, and more.",
+  "version": "1.0.0",
+  "scripts": {
+    "semantic-release": "semantic-release",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prepare": "husky install"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.5.0",
+    "@commitlint/config-conventional": "^19.5.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.0",
+    "@semantic-release/github": "^10.3.4",
+    "@semantic-release/release-notes-generator": "^14.0.1",
+    "semantic-release": "^24.1.1"
+  },
+  "release": {
+    "branches": [
+      "main"
+    ]
+  }
+}

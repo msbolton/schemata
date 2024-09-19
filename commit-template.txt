@@ -1,0 +1,12 @@
+# Conventional Commit Message Format
+# <type>[optional scope]: <description>
+#
+# Types: feat, fix, docs, style, refactor, test, chore
+# Example: 
+# feat(auth): add OAuth2 login
+#
+# BREAKING CHANGE: Describe the breaking change in detail here.
+#
+# Subject line should be concise (50 characters max) and written in the imperative mood.
+# Leave the body blank if no further explanation is needed.
+
