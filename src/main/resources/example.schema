@@ -1,10 +1,7 @@
-namespace com.example.models;
+namespace com.example
 
-import "common.schema";
-
-schema User {
-    id          UUID        @primaryKey
-    username    string      @unique
-    posts       Post[]      @relation
-    createdAt   datetime    @default(now())
+schema Person {
+    firstName string
+    lastName string
+    age int?
 }

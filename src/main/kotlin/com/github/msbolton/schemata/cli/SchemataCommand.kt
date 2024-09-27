@@ -1,8 +1,7 @@
-package com.github.msbolton.schemata
+package com.github.msbolton.schemata.cli
 
 import io.micronaut.configuration.picocli.PicocliRunner
 import picocli.CommandLine.Command
-import picocli.CommandLine.Option
 
 @Command(
     name = "schemata",

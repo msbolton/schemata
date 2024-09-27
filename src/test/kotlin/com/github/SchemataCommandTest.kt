@@ -1,6 +1,6 @@
 package com.github
 
-import com.github.msbolton.schemata.SchemataCommand
+import com.github.msbolton.schemata.cli.SchemataCommand
 import io.micronaut.configuration.picocli.PicocliRunner
 import io.micronaut.context.ApplicationContext
 import io.micronaut.context.env.Environment

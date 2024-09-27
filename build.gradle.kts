@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 plugins {
     id("org.jetbrains.kotlin.jvm") version "1.9.25"
     id("org.jetbrains.kotlin.kapt") version "1.9.25"
@@ -19,6 +21,7 @@ dependencies {
     kapt("info.picocli:picocli-codegen")
     kapt("io.micronaut.serde:micronaut-serde-processor")
     antlr("org.antlr:antlr4:4.13.2")
+    implementation("org.freemarker:freemarker:2.3.31")
     implementation("info.picocli:picocli")
     implementation("io.micronaut.kotlin:micronaut-kotlin-runtime")
     implementation("io.micronaut.picocli:micronaut-picocli")
@@ -30,23 +33,23 @@ dependencies {
 }
 
 tasks.generateGrammarSource {
-    arguments = arguments + listOf("-visitor", "-long-messages")
-    outputDirectory = file("build/generated-src/antlr/main")
+    arguments = arguments + listOf("-visitor", "-long-messages", "-package", "com.github.msbolton.schemata.parsing")
+    outputDirectory = file("build/generated-src/antlr/main/com/github/msbolton/schemata/parsing")
 }
 
 sourceSets {
     main {
         antlr.srcDir("src/main/antlr") // Default location for ANTLR grammar files
-        java.srcDirs("build/generated-src/antlr/main") // Where ANTLR generates Java code
+        kotlin.srcDirs("build/generated-src/antlr/main")
     }
 }
 
-tasks.compileKotlin {
-    dependsOn(tasks.generateGrammarSource) // Ensure parser is generated before compiling Kotlin
+tasks.withType<KotlinCompile>().configureEach {
+    dependsOn(tasks.withType<AntlrTask>())
 }
 
-tasks.compileJava {
-    dependsOn(tasks.generateGrammarSource)
+tasks.withType<Jar>().configureEach {
+    dependsOn(tasks.withType<AntlrTask>())
 }
 
 application {
@@ -61,7 +64,6 @@ kotlin {
         languageVersion.set(JavaLanguageVersion.of(17))
     }
 }
-
 
 micronaut {
     testRuntime("junit5")

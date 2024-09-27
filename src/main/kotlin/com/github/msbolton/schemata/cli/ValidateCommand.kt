@@ -1,4 +1,4 @@
-package com.github.msbolton.schemata
+package com.github.msbolton.schemata.cli
 
 import picocli.CommandLine
 
