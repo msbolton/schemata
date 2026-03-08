@@ -731,16 +731,11 @@ fn parse_simple_type_union(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::Path;
+    use crate::test_fixtures::*;
 
-    /// Helper: read a schema file and parse it.
-    fn parse_file(relative_path: &str) -> XsdSchema {
-        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let path = base.join(relative_path);
-        let xml = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-        parse_schema(&xml, &path)
-            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
+    fn parse_inline(xml: &str) -> XsdSchema {
+        parse_schema(xml, Path::new("test.xsd")).expect("failed to parse inline XSD")
     }
 
     // -----------------------------------------------------------------------
@@ -749,7 +744,7 @@ mod tests {
 
     #[test]
     fn structures_object_type_is_abstract() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/utility/structures.xsd");
+        let schema = parse_inline(STRUCTURES_XSD);
         let ot = schema
             .complex_types
             .iter()
@@ -760,7 +755,7 @@ mod tests {
 
     #[test]
     fn structures_object_type_has_direct_sequence() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/utility/structures.xsd");
+        let schema = parse_inline(STRUCTURES_XSD);
         let ot = schema
             .complex_types
             .iter()
@@ -778,7 +773,7 @@ mod tests {
 
     #[test]
     fn structures_object_type_has_any_attribute() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/utility/structures.xsd");
+        let schema = parse_inline(STRUCTURES_XSD);
         let ot = schema
             .complex_types
             .iter()
@@ -797,7 +792,7 @@ mod tests {
 
     #[test]
     fn structures_simple_object_attribute_group() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/utility/structures.xsd");
+        let schema = parse_inline(STRUCTURES_XSD);
         let ag = schema
             .attribute_groups
             .iter()
@@ -814,7 +809,7 @@ mod tests {
 
     #[test]
     fn structures_has_six_top_level_attributes() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/utility/structures.xsd");
+        let schema = parse_inline(STRUCTURES_XSD);
         assert_eq!(
             schema.attributes.len(),
             6,
@@ -824,7 +819,7 @@ mod tests {
 
     #[test]
     fn structures_abstract_elements() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/utility/structures.xsd");
+        let schema = parse_inline(STRUCTURES_XSD);
         let abstract_elements: Vec<_> = schema.elements.iter().filter(|e| e.is_abstract).collect();
         assert_eq!(
             abstract_elements.len(),
@@ -839,7 +834,7 @@ mod tests {
 
     #[test]
     fn niem_xs_has_14_complex_types() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/adapters/niem-xs.xsd");
+        let schema = parse_inline(NIEM_XS_XSD);
         assert_eq!(
             schema.complex_types.len(),
             14,
@@ -849,7 +844,7 @@ mod tests {
 
     #[test]
     fn niem_xs_all_simple_extension() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/adapters/niem-xs.xsd");
+        let schema = parse_inline(NIEM_XS_XSD);
         for ct in &schema.complex_types {
             match &ct.content {
                 ComplexTypeContent::SimpleExtension { .. } => {} // good
@@ -863,7 +858,7 @@ mod tests {
 
     #[test]
     fn niem_xs_imports_structures() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/adapters/niem-xs.xsd");
+        let schema = parse_inline(NIEM_XS_XSD);
         assert_eq!(schema.imports.len(), 1);
         assert_eq!(
             schema.imports[0].namespace.as_ref().unwrap().as_str(),
@@ -873,7 +868,7 @@ mod tests {
 
     #[test]
     fn niem_xs_string_type_base_is_xs_string() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/adapters/niem-xs.xsd");
+        let schema = parse_inline(NIEM_XS_XSD);
         let string_type = schema
             .complex_types
             .iter()
@@ -894,7 +889,7 @@ mod tests {
 
     #[test]
     fn uc2_core_types_confidence_code_simple_type_has_6_variants() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core-types.xsd");
+        let schema = parse_inline(CORE_TYPES_XSD);
         let st = schema
             .simple_types
             .iter()
@@ -913,7 +908,7 @@ mod tests {
 
     #[test]
     fn uc2_core_types_wgs84_extends_object_type() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core-types.xsd");
+        let schema = parse_inline(CORE_TYPES_XSD);
         let ct = schema
             .complex_types
             .iter()
@@ -932,7 +927,7 @@ mod tests {
 
     #[test]
     fn uc2_core_types_uuid_pattern() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core-types.xsd");
+        let schema = parse_inline(CORE_TYPES_XSD);
         let st = schema
             .simple_types
             .iter()
@@ -949,7 +944,7 @@ mod tests {
 
     #[test]
     fn uc2_core_types_string64_length() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core-types.xsd");
+        let schema = parse_inline(CORE_TYPES_XSD);
         let st = schema
             .simple_types
             .iter()
@@ -965,7 +960,7 @@ mod tests {
 
     #[test]
     fn uc2_core_types_substitution_group() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core-types.xsd");
+        let schema = parse_inline(CORE_TYPES_XSD);
         let el = schema
             .elements
             .iter()
@@ -980,7 +975,7 @@ mod tests {
 
     #[test]
     fn uc2_core_types_imports() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core-types.xsd");
+        let schema = parse_inline(CORE_TYPES_XSD);
         assert_eq!(schema.imports.len(), 3);
     }
 
@@ -990,7 +985,7 @@ mod tests {
 
     #[test]
     fn uc2_core_info_object_has_choice_with_14_elements() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core.xsd");
+        let schema = parse_inline(UC2_CORE_XSD);
         let ct = schema
             .complex_types
             .iter()
@@ -1017,7 +1012,7 @@ mod tests {
 
     #[test]
     fn uc2_core_substitution_group() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core.xsd");
+        let schema = parse_inline(UC2_CORE_XSD);
         let el = schema
             .elements
             .iter()
@@ -1032,7 +1027,7 @@ mod tests {
 
     #[test]
     fn uc2_core_imports() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core.xsd");
+        let schema = parse_inline(UC2_CORE_XSD);
         // 10 import directives
         assert_eq!(schema.imports.len(), 10);
     }
