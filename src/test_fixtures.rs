@@ -487,7 +487,6 @@ pub fn build_test_registry() -> TypeRegistry {
 }
 
 fn parse_xsd(xml: &str) -> (XsdSchema, PathBuf) {
-    let schema = parse_schema(xml, Path::new("test.xsd"))
-        .expect("failed to parse inline XSD");
+    let schema = parse_schema(xml, Path::new("test.xsd")).expect("failed to parse inline XSD");
     (schema, PathBuf::from("test.xsd"))
 }

@@ -1270,14 +1270,16 @@ mod tests {
     #[test]
     fn imports_are_tracked() {
         let reg = build_test_registry();
-        let ns =
-            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-core".to_string());
+        let ns = NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-core".to_string());
 
         let proto = transform_schema(&ns, &reg).unwrap();
 
         // uc2-core references be:BattlefieldEntity, so it should import that package.
         assert!(
-            proto.imports.iter().any(|i| i.contains("battlefield_entity")),
+            proto
+                .imports
+                .iter()
+                .any(|i| i.contains("battlefield_entity")),
             "should import battlefield_entity package, got: {:?}",
             proto.imports
         );

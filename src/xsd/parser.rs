@@ -731,8 +731,8 @@ fn parse_simple_type_union(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
     use crate::test_fixtures::*;
+    use std::path::Path;
 
     fn parse_inline(xml: &str) -> XsdSchema {
         parse_schema(xml, Path::new("test.xsd")).expect("failed to parse inline XSD")
