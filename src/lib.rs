@@ -4,3 +4,6 @@ pub mod proto;
 pub mod resolver;
 pub mod transform;
 pub mod xsd;
+
+#[cfg(test)]
+pub mod test_fixtures;
