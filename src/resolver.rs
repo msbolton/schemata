@@ -210,48 +210,7 @@ pub fn build_type_registry(schemas: Vec<(XsdSchema, PathBuf)>) -> TypeRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::xsd::parser::parse_schema;
-
-    /// Parse all XSD files under `schema/core-xsd/` and build a TypeRegistry.
-    fn build_test_registry() -> TypeRegistry {
-        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let xsd_root = base.join("schema/core-xsd");
-
-        let mut schemas = Vec::new();
-        collect_xsd_files(&xsd_root, &mut schemas);
-
-        assert!(
-            !schemas.is_empty(),
-            "no XSD files found under schema/core-xsd/"
-        );
-
-        let parsed: Vec<(XsdSchema, PathBuf)> = schemas
-            .into_iter()
-            .filter_map(|path| {
-                let xml = std::fs::read_to_string(&path).ok()?;
-                match parse_schema(&xml, &path) {
-                    Ok(schema) => Some((schema, path)),
-                    Err(_) => None, // skip unparseable files
-                }
-            })
-            .collect();
-
-        build_type_registry(parsed)
-    }
-
-    /// Recursively collect all `.xsd` files under a directory.
-    fn collect_xsd_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    collect_xsd_files(&path, out);
-                } else if path.extension().and_then(|e| e.to_str()) == Some("xsd") {
-                    out.push(path);
-                }
-            }
-        }
-    }
+    use crate::test_fixtures::build_test_registry;
 
     #[test]
     fn registry_has_key_namespaces() {
