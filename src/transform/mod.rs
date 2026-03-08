@@ -967,49 +967,7 @@ fn niem_xs_to_proto(local_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resolver::build_type_registry;
-    use crate::xsd::parser::parse_schema;
-    use std::path::PathBuf;
-
-    /// Parse all XSD files under `schema/core-xsd/` and build a TypeRegistry.
-    fn build_test_registry() -> TypeRegistry {
-        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let xsd_root = base.join("schema/core-xsd");
-
-        let mut xsd_files = Vec::new();
-        collect_xsd_files(&xsd_root, &mut xsd_files);
-
-        assert!(
-            !xsd_files.is_empty(),
-            "no XSD files found under schema/core-xsd/"
-        );
-
-        let parsed: Vec<(XsdSchema, PathBuf)> = xsd_files
-            .into_iter()
-            .filter_map(|path| {
-                let xml = std::fs::read_to_string(&path).ok()?;
-                match parse_schema(&xml, &path) {
-                    Ok(schema) => Some((schema, path)),
-                    Err(_) => None,
-                }
-            })
-            .collect();
-
-        build_type_registry(parsed)
-    }
-
-    fn collect_xsd_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    collect_xsd_files(&path, out);
-                } else if path.extension().and_then(|e| e.to_str()) == Some("xsd") {
-                    out.push(path);
-                }
-            }
-        }
-    }
+    use crate::test_fixtures::build_test_registry;
 
     // -- Integration: transform a namespace ---------------------------------
 
@@ -1313,14 +1271,14 @@ mod tests {
     fn imports_are_tracked() {
         let reg = build_test_registry();
         let ns =
-            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string());
+            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-core".to_string());
 
         let proto = transform_schema(&ns, &reg).unwrap();
 
-        // battlefieldEntity references uc2-types types, so it should import that package.
+        // uc2-core references be:BattlefieldEntity, so it should import that package.
         assert!(
-            proto.imports.iter().any(|i| i.contains("uc2_types")),
-            "should import uc2_types package, got: {:?}",
+            proto.imports.iter().any(|i| i.contains("battlefield_entity")),
+            "should import battlefield_entity package, got: {:?}",
             proto.imports
         );
     }
