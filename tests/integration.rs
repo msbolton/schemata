@@ -66,7 +66,11 @@ fn collect_proto_results(base: &Path, dir: &Path, out: &mut Vec<(String, String)
             if path.is_dir() {
                 collect_proto_results(base, &path, out);
             } else if path.extension().and_then(|e| e.to_str()) == Some("proto") {
-                let rel = path.strip_prefix(base).unwrap().to_string_lossy().to_string();
+                let rel = path
+                    .strip_prefix(base)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
                 let content = fs::read_to_string(&path).unwrap();
                 out.push((rel, content));
             }
@@ -274,9 +278,7 @@ fn empty_proto_files_are_not_written() {
 
     // Verify that structures (which produces only abstract types) is not in
     // the output, since it would be empty.
-    let has_structures = results
-        .iter()
-        .any(|(p, _)| p == "niem/structures/v5.proto");
+    let has_structures = results.iter().any(|(p, _)| p == "niem/structures/v5.proto");
     assert!(
         !has_structures,
         "structures.proto should not be generated (all types are abstract/skipped)"

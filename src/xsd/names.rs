@@ -62,9 +62,7 @@ impl NamespaceMap {
 
     /// Iterate over all (prefix, uri) pairs.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &NamespaceUri)> {
-        self.prefix_to_uri
-            .iter()
-            .map(|(k, v)| (k.as_str(), v))
+        self.prefix_to_uri.iter().map(|(k, v)| (k.as_str(), v))
     }
 }
 

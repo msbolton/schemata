@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use roxmltree::{Document, Node};
 use tracing::warn;
 
@@ -21,9 +21,8 @@ use crate::xsd::names::{NamespaceMap, XS_NAMESPACE};
 ///
 /// `source_path` is used only for error messages.
 pub fn parse_schema(xml: &str, source_path: &Path) -> Result<XsdSchema> {
-    let doc = Document::parse(xml).with_context(|| {
-        format!("failed to parse XML in {}", source_path.display())
-    })?;
+    let doc = Document::parse(xml)
+        .with_context(|| format!("failed to parse XML in {}", source_path.display()))?;
 
     let root = doc.root_element();
     ensure_xsd_element(&root, "schema", source_path)?;
@@ -48,14 +47,18 @@ pub fn parse_schema(xml: &str, source_path: &Path) -> Result<XsdSchema> {
         match local {
             "import" => schema.imports.push(parse_import(&child)),
             "complexType" => {
-                schema
-                    .complex_types
-                    .push(parse_complex_type(&child, &ns_map, &schema.target_namespace)?);
+                schema.complex_types.push(parse_complex_type(
+                    &child,
+                    &ns_map,
+                    &schema.target_namespace,
+                )?);
             }
             "simpleType" => {
-                schema
-                    .simple_types
-                    .push(parse_simple_type(&child, &ns_map, &schema.target_namespace)?);
+                schema.simple_types.push(parse_simple_type(
+                    &child,
+                    &ns_map,
+                    &schema.target_namespace,
+                )?);
             }
             "element" => {
                 schema
@@ -68,9 +71,11 @@ pub fn parse_schema(xml: &str, source_path: &Path) -> Result<XsdSchema> {
                     .push(parse_attribute(&child, &ns_map, &schema.target_namespace));
             }
             "attributeGroup" => {
-                schema
-                    .attribute_groups
-                    .push(parse_attribute_group(&child, &ns_map, &schema.target_namespace)?);
+                schema.attribute_groups.push(parse_attribute_group(
+                    &child,
+                    &ns_map,
+                    &schema.target_namespace,
+                )?);
             }
             // xs:annotation at schema level, xs:include, xs:redefine, etc. — skip
             _ => {}
@@ -211,14 +216,27 @@ fn parse_complex_type(
     // Collect attributes, attributeGroup refs, and anyAttribute that appear
     // as direct children of the complexType — these apply when there is no
     // complexContent/simpleContent wrapper, or when there is direct content.
-    let (mut attrs, mut ag_refs, mut any_attr) =
-        collect_attributes(node, ns_map, default_ns);
+    let (mut attrs, mut ag_refs, mut any_attr) = collect_attributes(node, ns_map, default_ns);
 
     // Determine the content model.
     let content = if let Some(cc) = xsd_child(node, "complexContent") {
-        parse_complex_content(&cc, ns_map, default_ns, &mut attrs, &mut ag_refs, &mut any_attr)?
+        parse_complex_content(
+            &cc,
+            ns_map,
+            default_ns,
+            &mut attrs,
+            &mut ag_refs,
+            &mut any_attr,
+        )?
     } else if let Some(sc) = xsd_child(node, "simpleContent") {
-        parse_simple_content(&sc, ns_map, default_ns, &mut attrs, &mut ag_refs, &mut any_attr)?
+        parse_simple_content(
+            &sc,
+            ns_map,
+            default_ns,
+            &mut attrs,
+            &mut ag_refs,
+            &mut any_attr,
+        )?
     } else if let Some(compositor) = find_compositor(node, ns_map, default_ns)? {
         // Direct content: sequence/choice/all at top level.
         ComplexTypeContent::Direct {
@@ -255,8 +273,7 @@ fn parse_complex_content(
         let compositor = find_compositor(&ext, ns_map, default_ns)?;
 
         // Collect attributes from the extension element.
-        let (ext_attrs, ext_ag_refs, ext_any_attr) =
-            collect_attributes(&ext, ns_map, default_ns);
+        let (ext_attrs, ext_ag_refs, ext_any_attr) = collect_attributes(&ext, ns_map, default_ns);
         attrs.extend(ext_attrs);
         ag_refs.extend(ext_ag_refs);
         if ext_any_attr.is_some() {
@@ -269,8 +286,7 @@ fn parse_complex_content(
             .context("complexContent/restriction must have a resolvable 'base' attribute")?;
         let compositor = find_compositor(&res, ns_map, default_ns)?;
 
-        let (res_attrs, res_ag_refs, res_any_attr) =
-            collect_attributes(&res, ns_map, default_ns);
+        let (res_attrs, res_ag_refs, res_any_attr) = collect_attributes(&res, ns_map, default_ns);
         attrs.extend(res_attrs);
         ag_refs.extend(res_ag_refs);
         if res_any_attr.is_some() {
@@ -296,8 +312,7 @@ fn parse_simple_content(
         let base = resolve_attr_qname(&ext, "base", ns_map, default_ns)
             .context("simpleContent/extension must have a resolvable 'base' attribute")?;
 
-        let (ext_attrs, ext_ag_refs, ext_any_attr) =
-            collect_attributes(&ext, ns_map, default_ns);
+        let (ext_attrs, ext_ag_refs, ext_any_attr) = collect_attributes(&ext, ns_map, default_ns);
         attrs.extend(ext_attrs);
         ag_refs.extend(ext_ag_refs);
         if ext_any_attr.is_some() {
@@ -309,8 +324,7 @@ fn parse_simple_content(
         let base = resolve_attr_qname(&res, "base", ns_map, default_ns)
             .context("simpleContent/restriction must have a resolvable 'base' attribute")?;
 
-        let (res_attrs, res_ag_refs, res_any_attr) =
-            collect_attributes(&res, ns_map, default_ns);
+        let (res_attrs, res_ag_refs, res_any_attr) = collect_attributes(&res, ns_map, default_ns);
         attrs.extend(res_attrs);
         ag_refs.extend(res_ag_refs);
         if res_any_attr.is_some() {
@@ -418,8 +432,7 @@ fn parse_element(
     let element_ref = resolve_attr_qname(node, "ref", ns_map, default_ns);
     let name = node.attribute("name").map(|s| s.to_string());
     let type_ref = resolve_attr_qname(node, "type", ns_map, default_ns);
-    let substitution_group =
-        resolve_attr_qname(node, "substitutionGroup", ns_map, default_ns);
+    let substitution_group = resolve_attr_qname(node, "substitutionGroup", ns_map, default_ns);
     let is_abstract = node.attribute("abstract") == Some("true");
 
     let min_occurs = parse_min_occurs(node);
@@ -514,8 +527,7 @@ fn collect_attributes(
             }
             "attributeGroup" => {
                 // An attributeGroup child with a `ref` attribute is a reference.
-                if let Some(qn) = resolve_attr_qname(&child, "ref", ns_map, default_ns)
-                {
+                if let Some(qn) = resolve_attr_qname(&child, "ref", ns_map, default_ns) {
                     ag_refs.push(qn);
                 }
             }
@@ -655,10 +667,7 @@ fn parse_simple_type_restriction(
             variants: enumerations,
         }
     } else if let Some(pat) = pattern {
-        SimpleTypeContent::Pattern {
-            base,
-            pattern: pat,
-        }
+        SimpleTypeContent::Pattern { base, pattern: pat }
     } else if min_inclusive.is_some()
         || max_inclusive.is_some()
         || min_exclusive.is_some()
@@ -730,9 +739,8 @@ mod tests {
         let path = base.join(relative_path);
         let xml = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-        parse_schema(&xml, &path).unwrap_or_else(|e| {
-            panic!("failed to parse {}: {e}", path.display())
-        })
+        parse_schema(&xml, &path)
+            .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()))
     }
 
     // -----------------------------------------------------------------------
@@ -817,11 +825,7 @@ mod tests {
     #[test]
     fn structures_abstract_elements() {
         let schema = parse_file("schema/core-xsd/niem/xsd/utility/structures.xsd");
-        let abstract_elements: Vec<_> = schema
-            .elements
-            .iter()
-            .filter(|e| e.is_abstract)
-            .collect();
+        let abstract_elements: Vec<_> = schema.elements.iter().filter(|e| e.is_abstract).collect();
         assert_eq!(
             abstract_elements.len(),
             2,
@@ -899,8 +903,7 @@ mod tests {
         match &st.content {
             SimpleTypeContent::Enumeration { variants, .. } => {
                 assert_eq!(variants.len(), 6, "should have 6 enum variants");
-                let values: Vec<&str> =
-                    variants.iter().map(|v| v.value.as_str()).collect();
+                let values: Vec<&str> = variants.iter().map(|v| v.value.as_str()).collect();
                 assert!(values.contains(&"HIGH"));
                 assert!(values.contains(&"VERY_LOW"));
             }
@@ -1003,11 +1006,7 @@ mod tests {
                 match &seq.items[0] {
                     CompositorItem::Compositor(choice) => {
                         assert_eq!(choice.kind, CompositorKind::Choice);
-                        assert_eq!(
-                            choice.items.len(),
-                            14,
-                            "choice should have 14 element refs"
-                        );
+                        assert_eq!(choice.items.len(), 14, "choice should have 14 element refs");
                     }
                     other => panic!("expected nested Compositor, got {other:?}"),
                 }

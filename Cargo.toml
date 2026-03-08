@@ -3,6 +3,12 @@ name = "schemata"
 version = "0.1.0"
 edition = "2021"
 description = "XSD to Protocol Buffers converter for NIEM-based schemas"
+license = "MIT"
+repository = "https://github.com/msbolton/schemata"
+homepage = "https://github.com/msbolton/schemata"
+readme = "README.md"
+keywords = ["xsd", "protobuf", "niem", "schema", "converter"]
+categories = ["command-line-utilities", "encoding"]
 
 [dependencies]
 roxmltree = "0.20"

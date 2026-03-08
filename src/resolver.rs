@@ -155,9 +155,7 @@ pub fn build_type_registry(schemas: Vec<(XsdSchema, PathBuf)>) -> TypeRegistry {
     // ------------------------------------------------------------------
     for (ns, schema, _path) in &indexed {
         for elem in &schema.elements {
-            if let (Some(ref name), Some(ref head)) =
-                (&elem.name, &elem.substitution_group)
-            {
+            if let (Some(ref name), Some(ref head)) = (&elem.name, &elem.substitution_group) {
                 let member_qname = QName {
                     namespace: ns.clone(),
                     local_name: name.clone(),
@@ -308,10 +306,7 @@ mod tests {
             .get_substitution_group(&head)
             .expect("CapabilityAbstract should have a substitution group");
 
-        let member_names: HashSet<&str> = members
-            .iter()
-            .map(|q| q.local_name.as_str())
-            .collect();
+        let member_names: HashSet<&str> = members.iter().map(|q| q.local_name.as_str()).collect();
 
         assert!(
             member_names.contains("CommunicationCapability"),
@@ -333,9 +328,7 @@ mod tests {
 
         // nc:LocationAugmentationPoint should have mo:LocationAugmentation
         let aug_point = QName {
-            namespace: NamespaceUri(
-                "http://release.niem.gov/niem/niem-core/5.0/".to_string(),
-            ),
+            namespace: NamespaceUri("http://release.niem.gov/niem/niem-core/5.0/".to_string()),
             local_name: "LocationAugmentationPoint".to_string(),
         };
 
@@ -358,9 +351,8 @@ mod tests {
     fn dependency_graph_has_imports() {
         let reg = build_test_registry();
 
-        let be_ns = NamespaceUri(
-            "http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string(),
-        );
+        let be_ns =
+            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string());
 
         let deps = reg
             .dependency_graph
@@ -370,9 +362,8 @@ mod tests {
         // battlefieldEntity imports structures and capability (among others)
         let structures_ns =
             NamespaceUri("http://release.niem.gov/niem/structures/5.0/".to_string());
-        let capability_ns = NamespaceUri(
-            "http://www.cto.mil/FNC3/UC2/Language/4/capability".to_string(),
-        );
+        let capability_ns =
+            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/capability".to_string());
 
         assert!(
             deps.contains(&structures_ns),
@@ -407,9 +398,7 @@ mod tests {
         let reg = build_test_registry();
 
         let qname = QName {
-            namespace: NamespaceUri(
-                "http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string(),
-            ),
+            namespace: NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string()),
             local_name: "ConfidenceCodeSimpleType".to_string(),
         };
 
@@ -428,7 +417,7 @@ mod tests {
         // like uc2-sos-all.xsd should be excluded.
         // We verify by checking that the count of schemas matches schemas with
         // actual target namespaces.
-        for (ns, _schema) in &reg.schemas {
+        for ns in reg.schemas.keys() {
             assert!(
                 !ns.as_str().is_empty(),
                 "registry should not contain schemas with empty namespace"
