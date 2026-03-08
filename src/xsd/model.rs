@@ -58,9 +58,13 @@ pub struct XsdAnnotation {
 // ---------------------------------------------------------------------------
 
 /// A parsed XSD schema document.
+///
+/// `target_namespace` is `None` only for chameleon/aggregation schemas (e.g.
+/// `uc2-sos-all.xsd`). The pipeline skips schemas without a target namespace
+/// during transform, so downstream code can safely require `Some`.
 #[derive(Debug, Clone)]
 pub struct XsdSchema {
-    /// The target namespace declared by this schema.
+    /// The target namespace declared by this schema (`None` for chameleon schemas).
     pub target_namespace: Option<NamespaceUri>,
 
     /// Imports of other namespaces.
@@ -210,13 +214,17 @@ impl Default for Occurs {
 // ---------------------------------------------------------------------------
 
 /// An `xs:element` declaration (top-level or within a compositor).
+///
+/// **Invariant:** An element is either a *reference* (`element_ref` is `Some`) or a
+/// *declaration* (`name` is `Some`, with optional `type_ref` or `anonymous_type`).
+/// These two forms are mutually exclusive — the parser enforces this.
 #[derive(Debug, Clone)]
 pub struct XsdElement {
     /// The local name of the element. Present for named elements; absent for
     /// anonymous element declarations (which shouldn't appear at top level).
     pub name: Option<String>,
 
-    /// A reference to a global element (`ref="..."`).
+    /// A reference to a global element (`ref="..."`). Mutually exclusive with `name`.
     pub element_ref: Option<QName>,
 
     /// The type of this element (`type="..."`).
@@ -290,7 +298,16 @@ pub struct AnyAttribute {
     /// The namespace constraint (e.g., `"urn:us:gov:ic:ism urn:us:gov:ic:ntk"`).
     pub namespace: Option<String>,
     /// The `processContents` value.
-    pub process_contents: Option<String>,
+    pub process_contents: ProcessContents,
+}
+
+/// The `processContents` attribute on `xs:any` / `xs:anyAttribute`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProcessContents {
+    Strict,
+    #[default]
+    Lax,
+    Skip,
 }
 
 // ---------------------------------------------------------------------------
