@@ -6,8 +6,9 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use roxmltree::{Document, Node};
+use tracing::warn;
 
 use crate::xsd::model::*;
 use crate::xsd::names::{NamespaceMap, XS_NAMESPACE};
@@ -49,17 +50,17 @@ pub fn parse_schema(xml: &str, source_path: &Path) -> Result<XsdSchema> {
             "complexType" => {
                 schema
                     .complex_types
-                    .push(parse_complex_type(&child, &ns_map, &schema.target_namespace));
+                    .push(parse_complex_type(&child, &ns_map, &schema.target_namespace)?);
             }
             "simpleType" => {
                 schema
                     .simple_types
-                    .push(parse_simple_type(&child, &ns_map, &schema.target_namespace));
+                    .push(parse_simple_type(&child, &ns_map, &schema.target_namespace)?);
             }
             "element" => {
                 schema
                     .elements
-                    .push(parse_element(&child, &ns_map, &schema.target_namespace));
+                    .push(parse_element(&child, &ns_map, &schema.target_namespace)?);
             }
             "attribute" => {
                 schema
@@ -69,7 +70,7 @@ pub fn parse_schema(xml: &str, source_path: &Path) -> Result<XsdSchema> {
             "attributeGroup" => {
                 schema
                     .attribute_groups
-                    .push(parse_attribute_group(&child, &ns_map, &schema.target_namespace));
+                    .push(parse_attribute_group(&child, &ns_map, &schema.target_namespace)?);
             }
             // xs:annotation at schema level, xs:include, xs:redefine, etc. — skip
             _ => {}
@@ -202,7 +203,7 @@ fn parse_complex_type(
     node: &Node,
     ns_map: &NamespaceMap,
     default_ns: &Option<NamespaceUri>,
-) -> XsdComplexType {
+) -> Result<XsdComplexType> {
     let name = node.attribute("name").map(|s| s.to_string());
     let is_abstract = node.attribute("abstract") == Some("true");
     let annotation = parse_annotation(node);
@@ -215,22 +216,20 @@ fn parse_complex_type(
 
     // Determine the content model.
     let content = if let Some(cc) = xsd_child(node, "complexContent") {
-        parse_complex_content(&cc, ns_map, default_ns, &mut attrs, &mut ag_refs, &mut any_attr)
+        parse_complex_content(&cc, ns_map, default_ns, &mut attrs, &mut ag_refs, &mut any_attr)?
     } else if let Some(sc) = xsd_child(node, "simpleContent") {
-        parse_simple_content(&sc, ns_map, default_ns, &mut attrs, &mut ag_refs, &mut any_attr)
-    } else if let Some(compositor) = find_compositor(node, ns_map, default_ns) {
+        parse_simple_content(&sc, ns_map, default_ns, &mut attrs, &mut ag_refs, &mut any_attr)?
+    } else if let Some(compositor) = find_compositor(node, ns_map, default_ns)? {
         // Direct content: sequence/choice/all at top level.
         ComplexTypeContent::Direct {
             compositor: Some(compositor),
         }
-    } else if !attrs.is_empty() || !ag_refs.is_empty() || any_attr.is_some() {
-        // Has attributes but no elements — empty content with attributes.
-        ComplexTypeContent::Empty
     } else {
+        // No compositor — empty content (possibly with attributes only).
         ComplexTypeContent::Empty
     };
 
-    XsdComplexType {
+    Ok(XsdComplexType {
         name,
         is_abstract,
         content,
@@ -238,7 +237,7 @@ fn parse_complex_type(
         attribute_group_refs: ag_refs,
         any_attribute: any_attr,
         annotation,
-    }
+    })
 }
 
 /// Parse `xs:complexContent` — either extension or restriction.
@@ -249,11 +248,11 @@ fn parse_complex_content(
     attrs: &mut Vec<XsdAttribute>,
     ag_refs: &mut Vec<QName>,
     any_attr: &mut Option<AnyAttribute>,
-) -> ComplexTypeContent {
+) -> Result<ComplexTypeContent> {
     if let Some(ext) = xsd_child(node, "extension") {
         let base = resolve_attr_qname(&ext, "base", ns_map, default_ns)
-            .expect("complexContent/extension must have a base attribute");
-        let compositor = find_compositor(&ext, ns_map, default_ns);
+            .context("complexContent/extension must have a resolvable 'base' attribute")?;
+        let compositor = find_compositor(&ext, ns_map, default_ns)?;
 
         // Collect attributes from the extension element.
         let (ext_attrs, ext_ag_refs, ext_any_attr) =
@@ -264,11 +263,11 @@ fn parse_complex_content(
             *any_attr = ext_any_attr;
         }
 
-        ComplexTypeContent::ComplexExtension { base, compositor }
+        Ok(ComplexTypeContent::ComplexExtension { base, compositor })
     } else if let Some(res) = xsd_child(node, "restriction") {
         let base = resolve_attr_qname(&res, "base", ns_map, default_ns)
-            .expect("complexContent/restriction must have a base attribute");
-        let compositor = find_compositor(&res, ns_map, default_ns);
+            .context("complexContent/restriction must have a resolvable 'base' attribute")?;
+        let compositor = find_compositor(&res, ns_map, default_ns)?;
 
         let (res_attrs, res_ag_refs, res_any_attr) =
             collect_attributes(&res, ns_map, default_ns);
@@ -278,9 +277,9 @@ fn parse_complex_content(
             *any_attr = res_any_attr;
         }
 
-        ComplexTypeContent::ComplexRestriction { base, compositor }
+        Ok(ComplexTypeContent::ComplexRestriction { base, compositor })
     } else {
-        ComplexTypeContent::Empty
+        Ok(ComplexTypeContent::Empty)
     }
 }
 
@@ -292,10 +291,10 @@ fn parse_simple_content(
     attrs: &mut Vec<XsdAttribute>,
     ag_refs: &mut Vec<QName>,
     any_attr: &mut Option<AnyAttribute>,
-) -> ComplexTypeContent {
+) -> Result<ComplexTypeContent> {
     if let Some(ext) = xsd_child(node, "extension") {
         let base = resolve_attr_qname(&ext, "base", ns_map, default_ns)
-            .expect("simpleContent/extension must have a base attribute");
+            .context("simpleContent/extension must have a resolvable 'base' attribute")?;
 
         let (ext_attrs, ext_ag_refs, ext_any_attr) =
             collect_attributes(&ext, ns_map, default_ns);
@@ -305,10 +304,10 @@ fn parse_simple_content(
             *any_attr = ext_any_attr;
         }
 
-        ComplexTypeContent::SimpleExtension { base }
+        Ok(ComplexTypeContent::SimpleExtension { base })
     } else if let Some(res) = xsd_child(node, "restriction") {
         let base = resolve_attr_qname(&res, "base", ns_map, default_ns)
-            .expect("simpleContent/restriction must have a base attribute");
+            .context("simpleContent/restriction must have a resolvable 'base' attribute")?;
 
         let (res_attrs, res_ag_refs, res_any_attr) =
             collect_attributes(&res, ns_map, default_ns);
@@ -318,9 +317,9 @@ fn parse_simple_content(
             *any_attr = res_any_attr;
         }
 
-        ComplexTypeContent::SimpleRestriction { base }
+        Ok(ComplexTypeContent::SimpleRestriction { base })
     } else {
-        ComplexTypeContent::Empty
+        Ok(ComplexTypeContent::Empty)
     }
 }
 
@@ -333,16 +332,16 @@ fn find_compositor(
     node: &Node,
     ns_map: &NamespaceMap,
     default_ns: &Option<NamespaceUri>,
-) -> Option<Compositor> {
+) -> Result<Option<Compositor>> {
     for child in xsd_children(node) {
         match child.tag_name().name() {
             "sequence" | "choice" | "all" => {
-                return Some(parse_compositor(&child, ns_map, default_ns));
+                return Ok(Some(parse_compositor(&child, ns_map, default_ns)?));
             }
             _ => {}
         }
     }
-    None
+    Ok(None)
 }
 
 /// Parse a compositor element (sequence, choice, or all) into our IR.
@@ -350,12 +349,12 @@ fn parse_compositor(
     node: &Node,
     ns_map: &NamespaceMap,
     default_ns: &Option<NamespaceUri>,
-) -> Compositor {
+) -> Result<Compositor> {
     let kind = match node.tag_name().name() {
         "sequence" => CompositorKind::Sequence,
         "choice" => CompositorKind::Choice,
         "all" => CompositorKind::All,
-        other => panic!("unexpected compositor kind: {other}"),
+        other => bail!("unexpected compositor kind: {other}"),
     };
 
     let min_occurs = parse_min_occurs(node);
@@ -367,24 +366,24 @@ fn parse_compositor(
             "element" => {
                 items.push(CompositorItem::Element(parse_element(
                     &child, ns_map, default_ns,
-                )));
+                )?));
             }
             "sequence" | "choice" | "all" => {
                 items.push(CompositorItem::Compositor(parse_compositor(
                     &child, ns_map, default_ns,
-                )));
+                )?));
             }
             // xs:any, xs:group, xs:annotation — skip for now
             _ => {}
         }
     }
 
-    Compositor {
+    Ok(Compositor {
         kind,
         min_occurs,
         max_occurs,
         items,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -415,7 +414,7 @@ fn parse_element(
     node: &Node,
     ns_map: &NamespaceMap,
     default_ns: &Option<NamespaceUri>,
-) -> XsdElement {
+) -> Result<XsdElement> {
     let element_ref = resolve_attr_qname(node, "ref", ns_map, default_ns);
     let name = node.attribute("name").map(|s| s.to_string());
     let type_ref = resolve_attr_qname(node, "type", ns_map, default_ns);
@@ -429,11 +428,12 @@ fn parse_element(
     let annotation = parse_annotation(node);
 
     // Check for an inline anonymous complexType.
-    let anonymous_type = xsd_child(node, "complexType").map(|ct_node| {
-        Box::new(parse_complex_type(&ct_node, ns_map, default_ns))
-    });
+    let anonymous_type = match xsd_child(node, "complexType") {
+        Some(ct_node) => Some(Box::new(parse_complex_type(&ct_node, ns_map, default_ns)?)),
+        None => None,
+    };
 
-    XsdElement {
+    Ok(XsdElement {
         name,
         element_ref,
         type_ref,
@@ -443,7 +443,7 @@ fn parse_element(
         min_occurs,
         max_occurs,
         annotation,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -478,22 +478,22 @@ fn parse_attribute_group(
     node: &Node,
     ns_map: &NamespaceMap,
     default_ns: &Option<NamespaceUri>,
-) -> XsdAttributeGroup {
+) -> Result<XsdAttributeGroup> {
     let name = node
         .attribute("name")
-        .expect("top-level attributeGroup must have a name")
+        .context("top-level attributeGroup must have a 'name' attribute")?
         .to_string();
     let annotation = parse_annotation(node);
 
     let (attrs, ag_refs, any_attr) = collect_attributes(node, ns_map, default_ns);
 
-    XsdAttributeGroup {
+    Ok(XsdAttributeGroup {
         name,
         attributes: attrs,
         attribute_group_refs: ag_refs,
         any_attribute: any_attr,
         annotation,
-    }
+    })
 }
 
 /// Collect `xs:attribute`, `xs:attributeGroup` refs, and `xs:anyAttribute`
@@ -552,21 +552,25 @@ fn parse_simple_type(
     node: &Node,
     ns_map: &NamespaceMap,
     default_ns: &Option<NamespaceUri>,
-) -> XsdSimpleType {
+) -> Result<XsdSimpleType> {
     let name = node
         .attribute("name")
-        .expect("top-level simpleType must have a name")
+        .context("top-level simpleType must have a 'name' attribute")?
         .to_string();
     let annotation = parse_annotation(node);
 
     let content = if let Some(restriction) = xsd_child(node, "restriction") {
-        parse_simple_type_restriction(&restriction, ns_map, default_ns)
+        parse_simple_type_restriction(&restriction, ns_map, default_ns)?
     } else if let Some(list) = xsd_child(node, "list") {
-        parse_simple_type_list(&list, ns_map, default_ns)
+        parse_simple_type_list(&list, ns_map, default_ns)?
     } else if let Some(union) = xsd_child(node, "union") {
         parse_simple_type_union(&union, ns_map, default_ns)
     } else {
         // Fallback — shouldn't happen in well-formed schemas.
+        warn!(
+            simple_type = %name,
+            "simpleType has no restriction/list/union child; defaulting to xs:string restriction"
+        );
         SimpleTypeContent::Restriction {
             base: QName {
                 namespace: NamespaceUri(XS_NAMESPACE.to_string()),
@@ -575,11 +579,11 @@ fn parse_simple_type(
         }
     };
 
-    XsdSimpleType {
+    Ok(XsdSimpleType {
         name,
         content,
         annotation,
-    }
+    })
 }
 
 /// Parse `xs:restriction` inside a `xs:simpleType`.
@@ -590,9 +594,9 @@ fn parse_simple_type_restriction(
     node: &Node,
     ns_map: &NamespaceMap,
     default_ns: &Option<NamespaceUri>,
-) -> SimpleTypeContent {
+) -> Result<SimpleTypeContent> {
     let base = resolve_attr_qname(node, "base", ns_map, default_ns)
-        .expect("simpleType restriction must have a base attribute");
+        .context("simpleType restriction must have a resolvable 'base' attribute")?;
 
     // Collect facets.
     let mut enumerations: Vec<EnumVariant> = Vec::new();
@@ -645,7 +649,7 @@ fn parse_simple_type_restriction(
 
     // Decide which variant to produce. Priority: enumerations > pattern >
     // range > length > plain restriction.
-    if !enumerations.is_empty() {
+    Ok(if !enumerations.is_empty() {
         SimpleTypeContent::Enumeration {
             base,
             variants: enumerations,
@@ -676,7 +680,7 @@ fn parse_simple_type_restriction(
         }
     } else {
         SimpleTypeContent::Restriction { base }
-    }
+    })
 }
 
 /// Parse `xs:list` inside a `xs:simpleType`.
@@ -684,10 +688,10 @@ fn parse_simple_type_list(
     node: &Node,
     ns_map: &NamespaceMap,
     default_ns: &Option<NamespaceUri>,
-) -> SimpleTypeContent {
+) -> Result<SimpleTypeContent> {
     let item_type = resolve_attr_qname(node, "itemType", ns_map, default_ns)
-        .expect("xs:list must have an itemType attribute");
-    SimpleTypeContent::List { item_type }
+        .context("xs:list must have a resolvable 'itemType' attribute")?;
+    Ok(SimpleTypeContent::List { item_type })
 }
 
 /// Parse `xs:union` inside a `xs:simpleType`.
@@ -700,7 +704,13 @@ fn parse_simple_type_union(
         .attribute("memberTypes")
         .unwrap_or("")
         .split_whitespace()
-        .filter_map(|mt| resolve_qname(mt, ns_map, default_ns))
+        .filter_map(|mt| {
+            let resolved = resolve_qname(mt, ns_map, default_ns);
+            if resolved.is_none() {
+                warn!(member_type = %mt, "could not resolve union memberType QName; skipping");
+            }
+            resolved
+        })
         .collect();
     SimpleTypeContent::Union { member_types }
 }
