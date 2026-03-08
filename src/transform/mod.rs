@@ -798,6 +798,16 @@ impl<'a> TransformContext<'a> {
         }
 
         // Regular complex type -> qualified name.
+        // If it's not in the registry at all, warn about the missing type.
+        if self.registry.resolve_complex_type(qname).is_none()
+            && self.registry.resolve_simple_type(qname).is_none()
+        {
+            tracing::warn!(
+                qname = %qname,
+                "type not found in registry; falling back to qualified name"
+            );
+        }
+
         let target_package = namespace_to_package(qname.namespace.as_str());
         self.maybe_add_import(&target_package);
 
