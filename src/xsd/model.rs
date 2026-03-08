@@ -142,19 +142,13 @@ pub enum ComplexTypeContent {
     },
 
     /// `xs:simpleContent/xs:extension base="..."` -- wraps a simple type with attributes.
-    SimpleExtension {
-        base: QName,
-    },
+    SimpleExtension { base: QName },
 
     /// `xs:simpleContent/xs:restriction base="..."` -- restricts a simple content type.
-    SimpleRestriction {
-        base: QName,
-    },
+    SimpleRestriction { base: QName },
 
     /// Direct content (sequence/choice/all at the top level, no extension/restriction).
-    Direct {
-        compositor: Option<Compositor>,
-    },
+    Direct { compositor: Option<Compositor> },
 
     /// Empty complex type (no content model at all, just attributes).
     Empty,
@@ -337,10 +331,7 @@ pub enum SimpleTypeContent {
     },
 
     /// `xs:restriction` with a `xs:pattern` facet.
-    Pattern {
-        base: QName,
-        pattern: String,
-    },
+    Pattern { base: QName, pattern: String },
 
     /// `xs:restriction` with range facets (minInclusive, maxInclusive, etc.).
     Range {
@@ -360,19 +351,13 @@ pub enum SimpleTypeContent {
     },
 
     /// `xs:list` with an item type.
-    List {
-        item_type: QName,
-    },
+    List { item_type: QName },
 
     /// `xs:union` of member types.
-    Union {
-        member_types: Vec<QName>,
-    },
+    Union { member_types: Vec<QName> },
 
     /// A plain restriction with no recognized facets (just a base type).
-    Restriction {
-        base: QName,
-    },
+    Restriction { base: QName },
 }
 
 /// A single variant in an enumeration simple type.

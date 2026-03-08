@@ -155,9 +155,7 @@ pub fn build_type_registry(schemas: Vec<(XsdSchema, PathBuf)>) -> TypeRegistry {
     // ------------------------------------------------------------------
     for (ns, schema, _path) in &indexed {
         for elem in &schema.elements {
-            if let (Some(ref name), Some(ref head)) =
-                (&elem.name, &elem.substitution_group)
-            {
+            if let (Some(ref name), Some(ref head)) = (&elem.name, &elem.substitution_group) {
                 let member_qname = QName {
                     namespace: ns.clone(),
                     local_name: name.clone(),
@@ -212,48 +210,7 @@ pub fn build_type_registry(schemas: Vec<(XsdSchema, PathBuf)>) -> TypeRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::xsd::parser::parse_schema;
-
-    /// Parse all XSD files under `schema/core-xsd/` and build a TypeRegistry.
-    fn build_test_registry() -> TypeRegistry {
-        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let xsd_root = base.join("schema/core-xsd");
-
-        let mut schemas = Vec::new();
-        collect_xsd_files(&xsd_root, &mut schemas);
-
-        assert!(
-            !schemas.is_empty(),
-            "no XSD files found under schema/core-xsd/"
-        );
-
-        let parsed: Vec<(XsdSchema, PathBuf)> = schemas
-            .into_iter()
-            .filter_map(|path| {
-                let xml = std::fs::read_to_string(&path).ok()?;
-                match parse_schema(&xml, &path) {
-                    Ok(schema) => Some((schema, path)),
-                    Err(_) => None, // skip unparseable files
-                }
-            })
-            .collect();
-
-        build_type_registry(parsed)
-    }
-
-    /// Recursively collect all `.xsd` files under a directory.
-    fn collect_xsd_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    collect_xsd_files(&path, out);
-                } else if path.extension().and_then(|e| e.to_str()) == Some("xsd") {
-                    out.push(path);
-                }
-            }
-        }
-    }
+    use crate::test_fixtures::build_test_registry;
 
     #[test]
     fn registry_has_key_namespaces() {
@@ -308,10 +265,7 @@ mod tests {
             .get_substitution_group(&head)
             .expect("CapabilityAbstract should have a substitution group");
 
-        let member_names: HashSet<&str> = members
-            .iter()
-            .map(|q| q.local_name.as_str())
-            .collect();
+        let member_names: HashSet<&str> = members.iter().map(|q| q.local_name.as_str()).collect();
 
         assert!(
             member_names.contains("CommunicationCapability"),
@@ -333,9 +287,7 @@ mod tests {
 
         // nc:LocationAugmentationPoint should have mo:LocationAugmentation
         let aug_point = QName {
-            namespace: NamespaceUri(
-                "http://release.niem.gov/niem/niem-core/5.0/".to_string(),
-            ),
+            namespace: NamespaceUri("http://release.niem.gov/niem/niem-core/5.0/".to_string()),
             local_name: "LocationAugmentationPoint".to_string(),
         };
 
@@ -358,9 +310,8 @@ mod tests {
     fn dependency_graph_has_imports() {
         let reg = build_test_registry();
 
-        let be_ns = NamespaceUri(
-            "http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string(),
-        );
+        let be_ns =
+            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string());
 
         let deps = reg
             .dependency_graph
@@ -370,9 +321,8 @@ mod tests {
         // battlefieldEntity imports structures and capability (among others)
         let structures_ns =
             NamespaceUri("http://release.niem.gov/niem/structures/5.0/".to_string());
-        let capability_ns = NamespaceUri(
-            "http://www.cto.mil/FNC3/UC2/Language/4/capability".to_string(),
-        );
+        let capability_ns =
+            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/capability".to_string());
 
         assert!(
             deps.contains(&structures_ns),
@@ -407,9 +357,7 @@ mod tests {
         let reg = build_test_registry();
 
         let qname = QName {
-            namespace: NamespaceUri(
-                "http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string(),
-            ),
+            namespace: NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string()),
             local_name: "ConfidenceCodeSimpleType".to_string(),
         };
 
@@ -428,7 +376,7 @@ mod tests {
         // like uc2-sos-all.xsd should be excluded.
         // We verify by checking that the count of schemas matches schemas with
         // actual target namespaces.
-        for (ns, _schema) in &reg.schemas {
+        for ns in reg.schemas.keys() {
             assert!(
                 !ns.as_str().is_empty(),
                 "registry should not contain schemas with empty namespace"

@@ -107,9 +107,8 @@ fn run_pipeline(input: &Path, output: &Path) -> Result<()> {
 
         // Create subdirectories as needed.
         if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("failed to create directory {}", parent.display())
-            })?;
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory {}", parent.display()))?;
         }
 
         let content = emit_proto_file(proto_file);
@@ -119,10 +118,7 @@ fn run_pipeline(input: &Path, output: &Path) -> Result<()> {
         tracing::info!(path = %out_path.display(), "wrote proto file");
     }
 
-    tracing::info!(
-        total = proto_files.len(),
-        "conversion complete"
-    );
+    tracing::info!(total = proto_files.len(), "conversion complete");
     Ok(())
 }
 

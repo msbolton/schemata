@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use roxmltree::{Document, Node};
 use tracing::warn;
 
@@ -21,9 +21,8 @@ use crate::xsd::names::{NamespaceMap, XS_NAMESPACE};
 ///
 /// `source_path` is used only for error messages.
 pub fn parse_schema(xml: &str, source_path: &Path) -> Result<XsdSchema> {
-    let doc = Document::parse(xml).with_context(|| {
-        format!("failed to parse XML in {}", source_path.display())
-    })?;
+    let doc = Document::parse(xml)
+        .with_context(|| format!("failed to parse XML in {}", source_path.display()))?;
 
     let root = doc.root_element();
     ensure_xsd_element(&root, "schema", source_path)?;
@@ -48,14 +47,18 @@ pub fn parse_schema(xml: &str, source_path: &Path) -> Result<XsdSchema> {
         match local {
             "import" => schema.imports.push(parse_import(&child)),
             "complexType" => {
-                schema
-                    .complex_types
-                    .push(parse_complex_type(&child, &ns_map, &schema.target_namespace)?);
+                schema.complex_types.push(parse_complex_type(
+                    &child,
+                    &ns_map,
+                    &schema.target_namespace,
+                )?);
             }
             "simpleType" => {
-                schema
-                    .simple_types
-                    .push(parse_simple_type(&child, &ns_map, &schema.target_namespace)?);
+                schema.simple_types.push(parse_simple_type(
+                    &child,
+                    &ns_map,
+                    &schema.target_namespace,
+                )?);
             }
             "element" => {
                 schema
@@ -68,9 +71,11 @@ pub fn parse_schema(xml: &str, source_path: &Path) -> Result<XsdSchema> {
                     .push(parse_attribute(&child, &ns_map, &schema.target_namespace));
             }
             "attributeGroup" => {
-                schema
-                    .attribute_groups
-                    .push(parse_attribute_group(&child, &ns_map, &schema.target_namespace)?);
+                schema.attribute_groups.push(parse_attribute_group(
+                    &child,
+                    &ns_map,
+                    &schema.target_namespace,
+                )?);
             }
             // xs:annotation at schema level, xs:include, xs:redefine, etc. — skip
             _ => {}
@@ -211,14 +216,27 @@ fn parse_complex_type(
     // Collect attributes, attributeGroup refs, and anyAttribute that appear
     // as direct children of the complexType — these apply when there is no
     // complexContent/simpleContent wrapper, or when there is direct content.
-    let (mut attrs, mut ag_refs, mut any_attr) =
-        collect_attributes(node, ns_map, default_ns);
+    let (mut attrs, mut ag_refs, mut any_attr) = collect_attributes(node, ns_map, default_ns);
 
     // Determine the content model.
     let content = if let Some(cc) = xsd_child(node, "complexContent") {
-        parse_complex_content(&cc, ns_map, default_ns, &mut attrs, &mut ag_refs, &mut any_attr)?
+        parse_complex_content(
+            &cc,
+            ns_map,
+            default_ns,
+            &mut attrs,
+            &mut ag_refs,
+            &mut any_attr,
+        )?
     } else if let Some(sc) = xsd_child(node, "simpleContent") {
-        parse_simple_content(&sc, ns_map, default_ns, &mut attrs, &mut ag_refs, &mut any_attr)?
+        parse_simple_content(
+            &sc,
+            ns_map,
+            default_ns,
+            &mut attrs,
+            &mut ag_refs,
+            &mut any_attr,
+        )?
     } else if let Some(compositor) = find_compositor(node, ns_map, default_ns)? {
         // Direct content: sequence/choice/all at top level.
         ComplexTypeContent::Direct {
@@ -255,8 +273,7 @@ fn parse_complex_content(
         let compositor = find_compositor(&ext, ns_map, default_ns)?;
 
         // Collect attributes from the extension element.
-        let (ext_attrs, ext_ag_refs, ext_any_attr) =
-            collect_attributes(&ext, ns_map, default_ns);
+        let (ext_attrs, ext_ag_refs, ext_any_attr) = collect_attributes(&ext, ns_map, default_ns);
         attrs.extend(ext_attrs);
         ag_refs.extend(ext_ag_refs);
         if ext_any_attr.is_some() {
@@ -269,8 +286,7 @@ fn parse_complex_content(
             .context("complexContent/restriction must have a resolvable 'base' attribute")?;
         let compositor = find_compositor(&res, ns_map, default_ns)?;
 
-        let (res_attrs, res_ag_refs, res_any_attr) =
-            collect_attributes(&res, ns_map, default_ns);
+        let (res_attrs, res_ag_refs, res_any_attr) = collect_attributes(&res, ns_map, default_ns);
         attrs.extend(res_attrs);
         ag_refs.extend(res_ag_refs);
         if res_any_attr.is_some() {
@@ -296,8 +312,7 @@ fn parse_simple_content(
         let base = resolve_attr_qname(&ext, "base", ns_map, default_ns)
             .context("simpleContent/extension must have a resolvable 'base' attribute")?;
 
-        let (ext_attrs, ext_ag_refs, ext_any_attr) =
-            collect_attributes(&ext, ns_map, default_ns);
+        let (ext_attrs, ext_ag_refs, ext_any_attr) = collect_attributes(&ext, ns_map, default_ns);
         attrs.extend(ext_attrs);
         ag_refs.extend(ext_ag_refs);
         if ext_any_attr.is_some() {
@@ -309,8 +324,7 @@ fn parse_simple_content(
         let base = resolve_attr_qname(&res, "base", ns_map, default_ns)
             .context("simpleContent/restriction must have a resolvable 'base' attribute")?;
 
-        let (res_attrs, res_ag_refs, res_any_attr) =
-            collect_attributes(&res, ns_map, default_ns);
+        let (res_attrs, res_ag_refs, res_any_attr) = collect_attributes(&res, ns_map, default_ns);
         attrs.extend(res_attrs);
         ag_refs.extend(res_ag_refs);
         if res_any_attr.is_some() {
@@ -418,8 +432,7 @@ fn parse_element(
     let element_ref = resolve_attr_qname(node, "ref", ns_map, default_ns);
     let name = node.attribute("name").map(|s| s.to_string());
     let type_ref = resolve_attr_qname(node, "type", ns_map, default_ns);
-    let substitution_group =
-        resolve_attr_qname(node, "substitutionGroup", ns_map, default_ns);
+    let substitution_group = resolve_attr_qname(node, "substitutionGroup", ns_map, default_ns);
     let is_abstract = node.attribute("abstract") == Some("true");
 
     let min_occurs = parse_min_occurs(node);
@@ -514,8 +527,7 @@ fn collect_attributes(
             }
             "attributeGroup" => {
                 // An attributeGroup child with a `ref` attribute is a reference.
-                if let Some(qn) = resolve_attr_qname(&child, "ref", ns_map, default_ns)
-                {
+                if let Some(qn) = resolve_attr_qname(&child, "ref", ns_map, default_ns) {
                     ag_refs.push(qn);
                 }
             }
@@ -655,10 +667,7 @@ fn parse_simple_type_restriction(
             variants: enumerations,
         }
     } else if let Some(pat) = pattern {
-        SimpleTypeContent::Pattern {
-            base,
-            pattern: pat,
-        }
+        SimpleTypeContent::Pattern { base, pattern: pat }
     } else if min_inclusive.is_some()
         || max_inclusive.is_some()
         || min_exclusive.is_some()
@@ -722,17 +731,11 @@ fn parse_simple_type_union(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use crate::test_fixtures::*;
+    use std::path::Path;
 
-    /// Helper: read a schema file and parse it.
-    fn parse_file(relative_path: &str) -> XsdSchema {
-        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let path = base.join(relative_path);
-        let xml = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-        parse_schema(&xml, &path).unwrap_or_else(|e| {
-            panic!("failed to parse {}: {e}", path.display())
-        })
+    fn parse_inline(xml: &str) -> XsdSchema {
+        parse_schema(xml, Path::new("test.xsd")).expect("failed to parse inline XSD")
     }
 
     // -----------------------------------------------------------------------
@@ -741,7 +744,7 @@ mod tests {
 
     #[test]
     fn structures_object_type_is_abstract() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/utility/structures.xsd");
+        let schema = parse_inline(STRUCTURES_XSD);
         let ot = schema
             .complex_types
             .iter()
@@ -752,7 +755,7 @@ mod tests {
 
     #[test]
     fn structures_object_type_has_direct_sequence() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/utility/structures.xsd");
+        let schema = parse_inline(STRUCTURES_XSD);
         let ot = schema
             .complex_types
             .iter()
@@ -770,7 +773,7 @@ mod tests {
 
     #[test]
     fn structures_object_type_has_any_attribute() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/utility/structures.xsd");
+        let schema = parse_inline(STRUCTURES_XSD);
         let ot = schema
             .complex_types
             .iter()
@@ -789,7 +792,7 @@ mod tests {
 
     #[test]
     fn structures_simple_object_attribute_group() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/utility/structures.xsd");
+        let schema = parse_inline(STRUCTURES_XSD);
         let ag = schema
             .attribute_groups
             .iter()
@@ -806,7 +809,7 @@ mod tests {
 
     #[test]
     fn structures_has_six_top_level_attributes() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/utility/structures.xsd");
+        let schema = parse_inline(STRUCTURES_XSD);
         assert_eq!(
             schema.attributes.len(),
             6,
@@ -816,12 +819,8 @@ mod tests {
 
     #[test]
     fn structures_abstract_elements() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/utility/structures.xsd");
-        let abstract_elements: Vec<_> = schema
-            .elements
-            .iter()
-            .filter(|e| e.is_abstract)
-            .collect();
+        let schema = parse_inline(STRUCTURES_XSD);
+        let abstract_elements: Vec<_> = schema.elements.iter().filter(|e| e.is_abstract).collect();
         assert_eq!(
             abstract_elements.len(),
             2,
@@ -835,7 +834,7 @@ mod tests {
 
     #[test]
     fn niem_xs_has_14_complex_types() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/adapters/niem-xs.xsd");
+        let schema = parse_inline(NIEM_XS_XSD);
         assert_eq!(
             schema.complex_types.len(),
             14,
@@ -845,7 +844,7 @@ mod tests {
 
     #[test]
     fn niem_xs_all_simple_extension() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/adapters/niem-xs.xsd");
+        let schema = parse_inline(NIEM_XS_XSD);
         for ct in &schema.complex_types {
             match &ct.content {
                 ComplexTypeContent::SimpleExtension { .. } => {} // good
@@ -859,7 +858,7 @@ mod tests {
 
     #[test]
     fn niem_xs_imports_structures() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/adapters/niem-xs.xsd");
+        let schema = parse_inline(NIEM_XS_XSD);
         assert_eq!(schema.imports.len(), 1);
         assert_eq!(
             schema.imports[0].namespace.as_ref().unwrap().as_str(),
@@ -869,7 +868,7 @@ mod tests {
 
     #[test]
     fn niem_xs_string_type_base_is_xs_string() {
-        let schema = parse_file("schema/core-xsd/niem/xsd/adapters/niem-xs.xsd");
+        let schema = parse_inline(NIEM_XS_XSD);
         let string_type = schema
             .complex_types
             .iter()
@@ -890,7 +889,7 @@ mod tests {
 
     #[test]
     fn uc2_core_types_confidence_code_simple_type_has_6_variants() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core-types.xsd");
+        let schema = parse_inline(CORE_TYPES_XSD);
         let st = schema
             .simple_types
             .iter()
@@ -899,8 +898,7 @@ mod tests {
         match &st.content {
             SimpleTypeContent::Enumeration { variants, .. } => {
                 assert_eq!(variants.len(), 6, "should have 6 enum variants");
-                let values: Vec<&str> =
-                    variants.iter().map(|v| v.value.as_str()).collect();
+                let values: Vec<&str> = variants.iter().map(|v| v.value.as_str()).collect();
                 assert!(values.contains(&"HIGH"));
                 assert!(values.contains(&"VERY_LOW"));
             }
@@ -910,7 +908,7 @@ mod tests {
 
     #[test]
     fn uc2_core_types_wgs84_extends_object_type() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core-types.xsd");
+        let schema = parse_inline(CORE_TYPES_XSD);
         let ct = schema
             .complex_types
             .iter()
@@ -929,7 +927,7 @@ mod tests {
 
     #[test]
     fn uc2_core_types_uuid_pattern() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core-types.xsd");
+        let schema = parse_inline(CORE_TYPES_XSD);
         let st = schema
             .simple_types
             .iter()
@@ -946,7 +944,7 @@ mod tests {
 
     #[test]
     fn uc2_core_types_string64_length() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core-types.xsd");
+        let schema = parse_inline(CORE_TYPES_XSD);
         let st = schema
             .simple_types
             .iter()
@@ -962,7 +960,7 @@ mod tests {
 
     #[test]
     fn uc2_core_types_substitution_group() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core-types.xsd");
+        let schema = parse_inline(CORE_TYPES_XSD);
         let el = schema
             .elements
             .iter()
@@ -977,7 +975,7 @@ mod tests {
 
     #[test]
     fn uc2_core_types_imports() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core-types.xsd");
+        let schema = parse_inline(CORE_TYPES_XSD);
         assert_eq!(schema.imports.len(), 3);
     }
 
@@ -987,7 +985,7 @@ mod tests {
 
     #[test]
     fn uc2_core_info_object_has_choice_with_14_elements() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core.xsd");
+        let schema = parse_inline(UC2_CORE_XSD);
         let ct = schema
             .complex_types
             .iter()
@@ -1003,11 +1001,7 @@ mod tests {
                 match &seq.items[0] {
                     CompositorItem::Compositor(choice) => {
                         assert_eq!(choice.kind, CompositorKind::Choice);
-                        assert_eq!(
-                            choice.items.len(),
-                            14,
-                            "choice should have 14 element refs"
-                        );
+                        assert_eq!(choice.items.len(), 14, "choice should have 14 element refs");
                     }
                     other => panic!("expected nested Compositor, got {other:?}"),
                 }
@@ -1018,7 +1012,7 @@ mod tests {
 
     #[test]
     fn uc2_core_substitution_group() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core.xsd");
+        let schema = parse_inline(UC2_CORE_XSD);
         let el = schema
             .elements
             .iter()
@@ -1033,7 +1027,7 @@ mod tests {
 
     #[test]
     fn uc2_core_imports() {
-        let schema = parse_file("schema/core-xsd/extension/uc2-core.xsd");
+        let schema = parse_inline(UC2_CORE_XSD);
         // 10 import directives
         assert_eq!(schema.imports.len(), 10);
     }

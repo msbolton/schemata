@@ -68,10 +68,7 @@ pub fn transform_schema(ns: &NamespaceUri, registry: &TypeRegistry) -> Option<Pr
     }
 
     // Build import list.
-    let imports: Vec<String> = ctx
-        .imports
-        .into_iter()
-        .collect();
+    let imports: Vec<String> = ctx.imports.into_iter().collect();
 
     let source_xsd_path = registry.source_paths.get(ns).cloned();
 
@@ -125,7 +122,9 @@ impl<'a> TransformContext<'a> {
         let mut values = Vec::new();
 
         // Check if there's already an UNKNOWN variant.
-        let has_unknown = variants.iter().any(|v| v.value.eq_ignore_ascii_case("unknown"));
+        let has_unknown = variants
+            .iter()
+            .any(|v| v.value.eq_ignore_ascii_case("unknown"));
 
         if !has_unknown {
             // Insert a synthetic UNKNOWN = 0 value.
@@ -175,11 +174,7 @@ impl<'a> TransformContext<'a> {
     // -----------------------------------------------------------------------
 
     /// Transform a complex type into a proto message.
-    fn transform_complex_type(
-        &mut self,
-        ct: &XsdComplexType,
-        name: &str,
-    ) -> Option<ProtoMessage> {
+    fn transform_complex_type(&mut self, ct: &XsdComplexType, name: &str) -> Option<ProtoMessage> {
         let mut fields = Vec::new();
         let mut oneofs = Vec::new();
         let mut field_number = 1u32;
@@ -240,7 +235,12 @@ impl<'a> TransformContext<'a> {
         }
 
         // Rule 11: attributes
-        self.handle_attributes(&ct.attributes, &ct.attribute_group_refs, &mut fields, &mut field_number);
+        self.handle_attributes(
+            &ct.attributes,
+            &ct.attribute_group_refs,
+            &mut fields,
+            &mut field_number,
+        );
 
         // Rule 13: anyAttribute -> map<string, string>
         if ct.any_attribute.is_some() {
@@ -330,11 +330,7 @@ impl<'a> TransformContext<'a> {
     }
 
     /// Emit the standard NIEM structures attributes as fields.
-    fn emit_structures_attributes(
-        &self,
-        fields: &mut Vec<ProtoField>,
-        field_number: &mut u32,
-    ) {
+    fn emit_structures_attributes(&self, fields: &mut Vec<ProtoField>, field_number: &mut u32) {
         let attrs = [
             ("structures_id", "string", "A document-relative identifier."),
             ("structures_ref", "string", "A document-relative reference."),
@@ -378,8 +374,7 @@ impl<'a> TransformContext<'a> {
                 for item in &comp.items {
                     match item {
                         CompositorItem::Element(elem) => {
-                            if let Some(field_or_oneof) =
-                                self.transform_element(elem, field_number)
+                            if let Some(field_or_oneof) = self.transform_element(elem, field_number)
                             {
                                 match field_or_oneof {
                                     FieldOrOneof::Field(f) => fields.push(f),
@@ -397,11 +392,7 @@ impl<'a> TransformContext<'a> {
     }
 
     /// Build a oneof from a choice compositor.
-    fn build_choice_oneof(
-        &mut self,
-        comp: &Compositor,
-        field_number: &mut u32,
-    ) -> ProtoOneof {
+    fn build_choice_oneof(&mut self, comp: &Compositor, field_number: &mut u32) -> ProtoOneof {
         let mut oneof_fields = Vec::new();
 
         // Try to derive a meaningful name from the choice items.
@@ -475,8 +466,7 @@ impl<'a> TransformContext<'a> {
             }
 
             // Rule 5: substitution groups (non-augmentation abstract elements)
-            let is_abstract = resolved.map(|e| e.is_abstract).unwrap_or(false)
-                || elem.is_abstract;
+            let is_abstract = resolved.map(|e| e.is_abstract).unwrap_or(false) || elem.is_abstract;
             if is_abstract {
                 if let Some(members) = self.registry.get_substitution_group(qname) {
                     if !members.is_empty() {
@@ -512,13 +502,11 @@ impl<'a> TransformContext<'a> {
     fn element_qname(&self, elem: &XsdElement) -> Option<QName> {
         if let Some(ref qname) = elem.element_ref {
             Some(qname.clone())
-        } else if let Some(ref name) = elem.name {
-            Some(QName {
+        } else {
+            elem.name.as_ref().map(|name| QName {
                 namespace: self.current_ns.clone(),
                 local_name: name.clone(),
             })
-        } else {
-            None
         }
     }
 
@@ -952,12 +940,8 @@ fn xsd_builtin_to_proto(local_name: &str) -> String {
         }
         "double" | "decimal" => "double".to_string(),
         "float" => "float".to_string(),
-        "dateTime" => {
-            "google.protobuf.Timestamp".to_string()
-        }
-        "duration" => {
-            "google.protobuf.Duration".to_string()
-        }
+        "dateTime" => "google.protobuf.Timestamp".to_string(),
+        "duration" => "google.protobuf.Duration".to_string(),
         "base64Binary" | "hexBinary" => "bytes".to_string(),
         "date" => "string".to_string(),
         "ID" | "IDREF" | "IDREFS" => "string".to_string(),
@@ -983,58 +967,15 @@ fn niem_xs_to_proto(local_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resolver::build_type_registry;
-    use crate::xsd::parser::parse_schema;
-    use std::path::PathBuf;
-
-    /// Parse all XSD files under `schema/core-xsd/` and build a TypeRegistry.
-    fn build_test_registry() -> TypeRegistry {
-        let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let xsd_root = base.join("schema/core-xsd");
-
-        let mut xsd_files = Vec::new();
-        collect_xsd_files(&xsd_root, &mut xsd_files);
-
-        assert!(
-            !xsd_files.is_empty(),
-            "no XSD files found under schema/core-xsd/"
-        );
-
-        let parsed: Vec<(XsdSchema, PathBuf)> = xsd_files
-            .into_iter()
-            .filter_map(|path| {
-                let xml = std::fs::read_to_string(&path).ok()?;
-                match parse_schema(&xml, &path) {
-                    Ok(schema) => Some((schema, path)),
-                    Err(_) => None,
-                }
-            })
-            .collect();
-
-        build_type_registry(parsed)
-    }
-
-    fn collect_xsd_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    collect_xsd_files(&path, out);
-                } else if path.extension().and_then(|e| e.to_str()) == Some("xsd") {
-                    out.push(path);
-                }
-            }
-        }
-    }
+    use crate::test_fixtures::build_test_registry;
 
     // -- Integration: transform a namespace ---------------------------------
 
     #[test]
     fn transform_battlefield_entity_namespace() {
         let reg = build_test_registry();
-        let ns = NamespaceUri(
-            "http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string(),
-        );
+        let ns =
+            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string());
 
         let proto = transform_schema(&ns, &reg).expect("should produce a ProtoFile");
 
@@ -1049,9 +990,8 @@ mod tests {
     #[test]
     fn battlefield_entity_type_has_expected_fields() {
         let reg = build_test_registry();
-        let ns = NamespaceUri(
-            "http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string(),
-        );
+        let ns =
+            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string());
 
         let proto = transform_schema(&ns, &reg).unwrap();
 
@@ -1096,9 +1036,8 @@ mod tests {
     #[test]
     fn battle_damage_assessment_type_has_substitution_oneof() {
         let reg = build_test_registry();
-        let ns = NamespaceUri(
-            "http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string(),
-        );
+        let ns =
+            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string());
 
         let proto = transform_schema(&ns, &reg).unwrap();
 
@@ -1123,7 +1062,11 @@ mod tests {
             .find(|o| o.name.contains("damage_code"))
             .expect("should have a oneof related to damage_code");
 
-        let field_names: Vec<&str> = damage_oneof.fields.iter().map(|f| f.name.as_str()).collect();
+        let field_names: Vec<&str> = damage_oneof
+            .fields
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
         assert!(
             field_names.contains(&"damage_code"),
             "damage oneof should contain damage_code, got: {field_names:?}"
@@ -1133,9 +1076,8 @@ mod tests {
     #[test]
     fn battlefield_entity_type_augmentation_point_omitted_when_no_augmentations() {
         let reg = build_test_registry();
-        let ns = NamespaceUri(
-            "http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string(),
-        );
+        let ns =
+            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string());
 
         let proto = transform_schema(&ns, &reg).unwrap();
 
@@ -1165,9 +1107,7 @@ mod tests {
     #[test]
     fn confidence_code_simple_type_becomes_enum() {
         let reg = build_test_registry();
-        let ns = NamespaceUri(
-            "http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string(),
-        );
+        let ns = NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string());
 
         let proto = transform_schema(&ns, &reg).unwrap();
 
@@ -1214,9 +1154,7 @@ mod tests {
     #[test]
     fn niem_wrapper_types_are_collapsed() {
         let reg = build_test_registry();
-        let ns = NamespaceUri(
-            "http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string(),
-        );
+        let ns = NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string());
 
         let proto = transform_schema(&ns, &reg).unwrap();
 
@@ -1235,9 +1173,7 @@ mod tests {
     #[test]
     fn core_information_object_type_has_choice_oneof() {
         let reg = build_test_registry();
-        let ns = NamespaceUri(
-            "http://www.cto.mil/FNC3/UC2/Language/4/uc2-core".to_string(),
-        );
+        let ns = NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-core".to_string());
 
         let proto = transform_schema(&ns, &reg).unwrap();
 
@@ -1255,8 +1191,11 @@ mod tests {
 
         // The choice should contain battlefield_entity as one of the options.
         let choice_oneof = &cio_msg.oneofs[0];
-        let choice_field_names: Vec<&str> =
-            choice_oneof.fields.iter().map(|f| f.name.as_str()).collect();
+        let choice_field_names: Vec<&str> = choice_oneof
+            .fields
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
         assert!(
             choice_field_names.contains(&"battlefield_entity"),
             "choice oneof should contain battlefield_entity, got: {choice_field_names:?}"
@@ -1291,9 +1230,7 @@ mod tests {
     #[test]
     fn field_numbers_are_sequential_starting_from_1() {
         let reg = build_test_registry();
-        let ns = NamespaceUri(
-            "http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string(),
-        );
+        let ns = NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string());
 
         let proto = transform_schema(&ns, &reg).unwrap();
 
@@ -1333,19 +1270,17 @@ mod tests {
     #[test]
     fn imports_are_tracked() {
         let reg = build_test_registry();
-        let ns = NamespaceUri(
-            "http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string(),
-        );
+        let ns = NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-core".to_string());
 
         let proto = transform_schema(&ns, &reg).unwrap();
 
-        // battlefieldEntity references uc2-types types, so it should import that package.
+        // uc2-core references be:BattlefieldEntity, so it should import that package.
         assert!(
             proto
                 .imports
                 .iter()
-                .any(|i| i.contains("uc2_types")),
-            "should import uc2_types package, got: {:?}",
+                .any(|i| i.contains("battlefield_entity")),
+            "should import battlefield_entity package, got: {:?}",
             proto.imports
         );
     }
@@ -1366,7 +1301,10 @@ mod tests {
         assert_eq!(xsd_builtin_to_proto("double"), "double");
         assert_eq!(xsd_builtin_to_proto("decimal"), "double");
         assert_eq!(xsd_builtin_to_proto("float"), "float");
-        assert_eq!(xsd_builtin_to_proto("dateTime"), "google.protobuf.Timestamp");
+        assert_eq!(
+            xsd_builtin_to_proto("dateTime"),
+            "google.protobuf.Timestamp"
+        );
         assert_eq!(xsd_builtin_to_proto("duration"), "google.protobuf.Duration");
         assert_eq!(xsd_builtin_to_proto("base64Binary"), "bytes");
         assert_eq!(xsd_builtin_to_proto("hexBinary"), "bytes");

@@ -459,10 +459,7 @@ mod tests {
         let output = emit_proto_file(&file);
 
         // Find import lines
-        let import_lines: Vec<&str> = output
-            .lines()
-            .filter(|l| l.starts_with("import"))
-            .collect();
+        let import_lines: Vec<&str> = output.lines().filter(|l| l.starts_with("import")).collect();
 
         assert_eq!(import_lines.len(), 3, "duplicates should be removed");
         assert_eq!(import_lines[0], "import \"common/types.proto\";");

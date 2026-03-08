@@ -112,8 +112,7 @@ fn try_niem_namespace(uri: &str) -> Option<String> {
 /// Check if a string segment looks like a version (e.g., "5.0", "5.1", "3.0", "5").
 fn looks_like_version(s: &str) -> bool {
     let first_char = s.chars().next();
-    matches!(first_char, Some('0'..='9'))
-        && s.chars().all(|c| c.is_ascii_digit() || c == '.')
+    matches!(first_char, Some('0'..='9')) && s.chars().all(|c| c.is_ascii_digit() || c == '.')
 }
 
 /// Extract the major version from a version string like "5.0" -> "5".
@@ -222,9 +221,7 @@ pub fn type_name_to_field_name(name: &str) -> String {
 /// from which we strip the `SimpleType` suffix before converting.
 pub fn enum_value_name(enum_name: &str, value: &str) -> String {
     // Strip "SimpleType" suffix if present.
-    let base = enum_name
-        .strip_suffix("SimpleType")
-        .unwrap_or(enum_name);
+    let base = enum_name.strip_suffix("SimpleType").unwrap_or(enum_name);
 
     let prefix = to_snake_case(base).to_ascii_uppercase();
     let val_upper = sanitize_enum_value(value).to_ascii_uppercase();
@@ -325,9 +322,7 @@ mod tests {
     #[test]
     fn niem_military_operations_namespace() {
         assert_eq!(
-            namespace_to_package(
-                "http://release.niem.gov/niem/domains/militaryOperations/5.1/"
-            ),
+            namespace_to_package("http://release.niem.gov/niem/domains/militaryOperations/5.1/"),
             "niem.domains.military_operations.v5"
         );
     }
@@ -354,10 +349,7 @@ mod tests {
 
     #[test]
     fn snake_case_camel() {
-        assert_eq!(
-            to_snake_case("militaryOperations"),
-            "military_operations"
-        );
+        assert_eq!(to_snake_case("militaryOperations"), "military_operations");
     }
 
     #[test]
@@ -367,10 +359,7 @@ mod tests {
 
     #[test]
     fn snake_case_mixed_acronym_digits() {
-        assert_eq!(
-            to_snake_case("WGS84LocationType"),
-            "wgs84_location_type"
-        );
+        assert_eq!(to_snake_case("WGS84LocationType"), "wgs84_location_type");
     }
 
     #[test]
