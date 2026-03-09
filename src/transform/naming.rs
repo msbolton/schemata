@@ -14,58 +14,22 @@
 ///
 /// # Examples
 /// ```text
-/// "http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity" -> "uc2.battlefield_entity.v4"
 /// "http://release.niem.gov/niem/structures/5.0/"             -> "niem.structures.v5"
 /// "http://release.niem.gov/niem/proxy/niem-xs/5.0/"          -> "niem.proxy.niem_xs.v5"
 /// "http://release.niem.gov/niem/niem-core/5.0/"              -> "niem.niem_core.v5"
 /// "http://release.niem.gov/niem/domains/militaryOperations/5.1/" -> "niem.domains.military_operations.v5"
+/// "http://example.com/schemas/vehicle"                       -> "example_com.schemas.vehicle"
 /// ```
 pub fn namespace_to_package(uri: &str) -> String {
     // Strip trailing slash for uniform handling.
     let uri_trimmed = uri.trim_end_matches('/');
 
-    if let Some(pkg) = try_uc2_namespace(uri_trimmed) {
-        return pkg;
-    }
     if let Some(pkg) = try_niem_namespace(uri_trimmed) {
         return pkg;
     }
 
     // Fallback: use the host + path, converting to dotted snake_case.
     fallback_package(uri_trimmed)
-}
-
-/// Try to parse a UC2 namespace (cto.mil).
-///
-/// Pattern: `http://www.cto.mil/FNC3/UC2/Language/{version}/{name}`
-fn try_uc2_namespace(uri: &str) -> Option<String> {
-    // Look for the marker "/UC2/Language/" in the path.
-    let marker = "/UC2/Language/";
-    let idx = uri.find(marker)?;
-    let after = &uri[idx + marker.len()..]; // e.g. "4/battlefieldEntity"
-
-    let mut parts: Vec<&str> = after.split('/').filter(|s| !s.is_empty()).collect();
-    if parts.is_empty() {
-        return None;
-    }
-
-    // First segment is the version number.
-    let version_str = parts.remove(0);
-    let version = extract_major_version(version_str);
-
-    // Remaining segments are the package path.
-    let pkg_segments: Vec<String> = parts.iter().map(|s| to_snake_case(s)).collect();
-
-    let mut result = String::from("uc2");
-    for seg in &pkg_segments {
-        result.push('.');
-        result.push_str(seg);
-    }
-    result.push('.');
-    result.push('v');
-    result.push_str(&version);
-
-    Some(result)
 }
 
 /// Try to parse a NIEM namespace (release.niem.gov).
@@ -149,7 +113,7 @@ fn fallback_package(uri: &str) -> String {
 ///
 /// # Examples
 /// ```text
-/// "BattlefieldEntity"        -> "battlefield_entity"
+/// "VehicleType"              -> "vehicle_type"
 /// "niem-xs"                  -> "niem_xs"
 /// "niem-core"                -> "niem_core"
 /// "militaryOperations"       -> "military_operations"
@@ -280,18 +244,18 @@ mod tests {
     // -- namespace_to_package -----------------------------------------------
 
     #[test]
-    fn uc2_battlefield_entity_namespace() {
+    fn fallback_example_com_namespace() {
         assert_eq!(
-            namespace_to_package("http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity"),
-            "uc2.battlefield_entity.v4"
+            namespace_to_package("http://example.com/schemas/vehicle"),
+            "example_com.schemas.vehicle"
         );
     }
 
     #[test]
-    fn uc2_types_namespace() {
+    fn fallback_example_com_common_types_namespace() {
         assert_eq!(
-            namespace_to_package("http://www.cto.mil/FNC3/UC2/Language/4/uc2-types"),
-            "uc2.uc2_types.v4"
+            namespace_to_package("http://example.com/schemas/common-types"),
+            "example_com.schemas.common_types"
         );
     }
 
@@ -339,7 +303,7 @@ mod tests {
 
     #[test]
     fn snake_case_pascal() {
-        assert_eq!(to_snake_case("BattlefieldEntity"), "battlefield_entity");
+        assert_eq!(to_snake_case("VehicleType"), "vehicle_type");
     }
 
     #[test]
@@ -404,10 +368,10 @@ mod tests {
     }
 
     #[test]
-    fn import_path_uc2() {
+    fn import_path_example_com() {
         assert_eq!(
-            package_to_import_path("uc2.battlefield_entity.v4"),
-            "uc2/battlefield_entity/v4.proto"
+            package_to_import_path("example_com.schemas.vehicle"),
+            "example_com/schemas/vehicle.proto"
         );
     }
 }

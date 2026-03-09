@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema
+    targetNamespace="http://example.com/fleet/vehicle"
+    xmlns:veh="http://example.com/fleet/vehicle"
+    xmlns:common="http://example.com/fleet/common"
+    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    elementFormDefault="qualified">
+
+  <xs:import namespace="http://example.com/fleet/common" schemaLocation="../common/types.xsd"/>
+
+  <xs:annotation>
+    <xs:documentation>
+      Vehicle domain types for the fleet management system.
+      Covers vehicle definitions, maintenance records, and condition assessments.
+    </xs:documentation>
+  </xs:annotation>
+
+  <!-- ===================================================================
+       Complex types — main vehicle hierarchy
+       =================================================================== -->
+
+  <xs:complexType name="VehicleType">
+    <xs:annotation>
+      <xs:documentation>
+        A tracked vehicle in the fleet. Extends IdentifiableType to inherit
+        identifier and timestamp fields.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:complexContent>
+      <xs:extension base="common:IdentifiableType">
+        <xs:sequence>
+          <xs:element name="Callsign" type="common:CallsignType"/>
+          <xs:element name="Make" type="common:ShortStringType"/>
+          <xs:element name="Model" type="common:ShortStringType"/>
+          <xs:element name="YearOfManufacture" type="xs:gYear" minOccurs="0"/>
+          <xs:element name="FuelType" type="common:FuelTypeSimpleType"/>
+          <xs:element name="MaxRangeKm" type="common:PositiveDistanceType" minOccurs="0"/>
+          <xs:element name="CurrentStatus" type="common:StatusCodeType"/>
+          <xs:element name="HomeLocation" type="common:CoordinateType" minOccurs="0"/>
+          <xs:element ref="veh:VehicleCategoryAbstract"/>
+          <xs:element ref="veh:VehicleCapabilityAbstract" minOccurs="0" maxOccurs="unbounded"/>
+          <xs:element name="MaintenanceHistory" type="veh:MaintenanceRecordType" minOccurs="0" maxOccurs="unbounded"/>
+        </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Substitution group — vehicle category
+       =================================================================== -->
+
+  <xs:element name="VehicleCategoryAbstract" abstract="true" type="xs:string">
+    <xs:annotation>
+      <xs:documentation>
+        Abstract head element for the vehicle category substitution group.
+        Concrete elements declare which operational category this vehicle belongs to.
+      </xs:documentation>
+    </xs:annotation>
+  </xs:element>
+
+  <xs:element name="GroundVehicle" type="xs:string" substitutionGroup="veh:VehicleCategoryAbstract">
+    <xs:annotation>
+      <xs:documentation>A land-based vehicle (truck, car, APC, etc.).</xs:documentation>
+    </xs:annotation>
+  </xs:element>
+  <xs:element name="AirVehicle" type="xs:string" substitutionGroup="veh:VehicleCategoryAbstract">
+    <xs:annotation>
+      <xs:documentation>An airborne vehicle (helicopter, fixed-wing, UAV).</xs:documentation>
+    </xs:annotation>
+  </xs:element>
+  <xs:element name="WaterVehicle" type="xs:string" substitutionGroup="veh:VehicleCategoryAbstract">
+    <xs:annotation>
+      <xs:documentation>A waterborne vehicle (boat, ship, submarine).</xs:documentation>
+    </xs:annotation>
+  </xs:element>
+
+  <!-- ===================================================================
+       Substitution group — vehicle capability
+       =================================================================== -->
+
+  <xs:element name="VehicleCapabilityAbstract" abstract="true">
+    <xs:annotation>
+      <xs:documentation>
+        Abstract head for capabilities a vehicle may have.
+        Each concrete member is a different capability type.
+      </xs:documentation>
+    </xs:annotation>
+  </xs:element>
+
+  <xs:element name="CargoCapability" substitutionGroup="veh:VehicleCapabilityAbstract">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="MaxWeightKg" type="xs:double"/>
+        <xs:element name="MaxVolumeM3" type="xs:double" minOccurs="0"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+  <xs:element name="PassengerCapability" substitutionGroup="veh:VehicleCapabilityAbstract">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="SeatCount" type="xs:positiveInteger"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+  <xs:element name="TowingCapability" substitutionGroup="veh:VehicleCapabilityAbstract">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="MaxTowWeightKg" type="xs:double"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- ===================================================================
+       Complex types — maintenance records
+       =================================================================== -->
+
+  <xs:complexType name="MaintenanceRecordType">
+    <xs:annotation>
+      <xs:documentation>
+        A record of a maintenance action performed on a vehicle.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="RecordId" type="common:UuidType"/>
+      <xs:element name="PerformedDateTime" type="xs:dateTime"/>
+      <xs:element name="Category" type="veh:MaintenanceCategorySimpleType"/>
+      <xs:element name="Summary" type="common:ShortStringType"/>
+      <xs:element name="Details" type="common:DescriptionType" minOccurs="0"/>
+      <xs:element name="CostUSD" type="xs:decimal" minOccurs="0"/>
+      <xs:element name="PartsReplaced" type="common:ShortStringType" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="NextScheduledDate" type="xs:date" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:simpleType name="MaintenanceCategorySimpleType">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="SCHEDULED"/>
+      <xs:enumeration value="UNSCHEDULED"/>
+      <xs:enumeration value="EMERGENCY"/>
+      <xs:enumeration value="INSPECTION"/>
+      <xs:enumeration value="MODIFICATION"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- ===================================================================
+       Complex types — vehicle condition (xs:choice pattern)
+       =================================================================== -->
+
+  <xs:complexType name="VehicleConditionType">
+    <xs:annotation>
+      <xs:documentation>
+        The condition of a vehicle, reported either as a structured assessment
+        or as a free-text note. Exercises the xs:choice compositor pattern.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="ReportedDateTime" type="xs:dateTime"/>
+      <xs:choice>
+        <xs:element name="StructuredAssessment" type="veh:StructuredAssessmentType"/>
+        <xs:element name="FreeTextNote" type="common:DescriptionType"/>
+      </xs:choice>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="StructuredAssessmentType">
+    <xs:sequence>
+      <xs:element name="OverallStatus" type="common:StatusCodeSimpleType"/>
+      <xs:element name="FuelLevelPercent" type="common:PercentageType"/>
+      <xs:element name="OdometerKm" type="xs:nonNegativeInteger"/>
+      <xs:element name="Deficiencies" type="common:ShortStringType" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Top-level elements
+       =================================================================== -->
+
+  <xs:element name="Vehicle" type="veh:VehicleType"/>
+  <xs:element name="VehicleCondition" type="veh:VehicleConditionType"/>
+  <xs:element name="MaintenanceRecord" type="veh:MaintenanceRecordType"/>
+
+</xs:schema>

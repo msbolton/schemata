@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema
+    targetNamespace="http://example.com/fleet/common"
+    xmlns:common="http://example.com/fleet/common"
+    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    elementFormDefault="qualified">
+
+  <xs:annotation>
+    <xs:documentation>
+      Common types shared across the fleet management domain.
+      Provides base types, enumerations, and reusable simple type restrictions.
+    </xs:documentation>
+  </xs:annotation>
+
+  <!-- ===================================================================
+       Simple types — enumerations
+       =================================================================== -->
+
+  <xs:simpleType name="StatusCodeSimpleType">
+    <xs:annotation>
+      <xs:documentation>Operational readiness status of an asset.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="OPERATIONAL"/>
+      <xs:enumeration value="DEGRADED"/>
+      <xs:enumeration value="NON_OPERATIONAL"/>
+      <xs:enumeration value="IN_MAINTENANCE"/>
+      <xs:enumeration value="DECOMMISSIONED"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="PriorityLevelSimpleType">
+    <xs:annotation>
+      <xs:documentation>Priority classification for tasks and missions.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="CRITICAL"/>
+      <xs:enumeration value="HIGH"/>
+      <xs:enumeration value="MEDIUM"/>
+      <xs:enumeration value="LOW"/>
+      <xs:enumeration value="ROUTINE"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="FuelTypeSimpleType">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="DIESEL"/>
+      <xs:enumeration value="GASOLINE"/>
+      <xs:enumeration value="JET_A"/>
+      <xs:enumeration value="ELECTRIC"/>
+      <xs:enumeration value="HYBRID"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- ===================================================================
+       Simple types — pattern, length, and range restrictions
+       =================================================================== -->
+
+  <xs:simpleType name="UuidType">
+    <xs:annotation>
+      <xs:documentation>A UUID in 8-4-4-4-12 hex format.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:token">
+      <xs:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="ShortStringType">
+    <xs:annotation>
+      <xs:documentation>A string of at most 128 characters.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:string">
+      <xs:maxLength value="128"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="DescriptionType">
+    <xs:restriction base="xs:string">
+      <xs:maxLength value="4096"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="PercentageType">
+    <xs:annotation>
+      <xs:documentation>A decimal value between 0.0 and 100.0 inclusive.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:decimal">
+      <xs:minInclusive value="0"/>
+      <xs:maxInclusive value="100"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="PositiveDistanceType">
+    <xs:annotation>
+      <xs:documentation>A distance in meters, must be greater than zero.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:double">
+      <xs:minExclusive value="0"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="CallsignType">
+    <xs:annotation>
+      <xs:documentation>An alphanumeric callsign, 2 to 12 characters.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:token">
+      <xs:minLength value="2"/>
+      <xs:maxLength value="12"/>
+      <xs:pattern value="[A-Z0-9\-]+"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- ===================================================================
+       Complex types — base / abstract
+       =================================================================== -->
+
+  <xs:complexType name="IdentifiableType" abstract="true">
+    <xs:annotation>
+      <xs:documentation>
+        Abstract base type for any entity with a unique identifier and timestamps.
+        All domain types extend this.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="Identifier" type="common:UuidType"/>
+      <xs:element name="CreatedDateTime" type="xs:dateTime"/>
+      <xs:element name="ModifiedDateTime" type="xs:dateTime" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Complex types — coordinate and location
+       =================================================================== -->
+
+  <xs:complexType name="CoordinateType">
+    <xs:annotation>
+      <xs:documentation>A WGS-84 geographic coordinate with optional altitude.</xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="Latitude" type="xs:double"/>
+      <xs:element name="Longitude" type="xs:double"/>
+      <xs:element name="AltitudeMeters" type="xs:double" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="BoundingBoxType">
+    <xs:annotation>
+      <xs:documentation>An axis-aligned geographic bounding box.</xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="SouthWest" type="common:CoordinateType"/>
+      <xs:element name="NorthEast" type="common:CoordinateType"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Complex types — simpleContent extension (wrapper pattern)
+       =================================================================== -->
+
+  <xs:complexType name="StatusCodeType">
+    <xs:annotation>
+      <xs:documentation>
+        A wrapper around StatusCodeSimpleType that adds an optional source attribute.
+        Exercises the simpleContent/extension pattern.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:simpleContent>
+      <xs:extension base="common:StatusCodeSimpleType">
+        <xs:attribute name="source" type="xs:string" use="required"/>
+        <xs:attribute name="confidence" type="common:PercentageType"/>
+      </xs:extension>
+    </xs:simpleContent>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Elements
+       =================================================================== -->
+
+  <xs:element name="StatusCode" type="common:StatusCodeType"/>
+  <xs:element name="Location" type="common:CoordinateType"/>
+  <xs:element name="Description" type="common:DescriptionType"/>
+
+</xs:schema>

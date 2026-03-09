@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Aggregation schema — no targetNamespace.
+  This file simply imports all the fleet schemas so a single schema location
+  can be used to pull in the entire set. The converter should skip this file
+  since it has no targetNamespace.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <xs:import namespace="http://example.com/fleet/common" schemaLocation="common/types.xsd"/>
+  <xs:import namespace="http://example.com/fleet/vehicle" schemaLocation="fleet/vehicle.xsd"/>
+  <xs:import namespace="http://example.com/fleet/personnel" schemaLocation="fleet/personnel.xsd"/>
+  <xs:import namespace="http://example.com/fleet/mission" schemaLocation="fleet/mission.xsd"/>
+  <xs:import namespace="http://example.com/fleet/telemetry" schemaLocation="fleet/telemetry.xsd"/>
+
+</xs:schema>

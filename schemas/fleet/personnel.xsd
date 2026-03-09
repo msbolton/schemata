@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema
+    targetNamespace="http://example.com/fleet/personnel"
+    xmlns:pers="http://example.com/fleet/personnel"
+    xmlns:common="http://example.com/fleet/common"
+    xmlns:veh="http://example.com/fleet/vehicle"
+    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    elementFormDefault="qualified">
+
+  <xs:import namespace="http://example.com/fleet/common" schemaLocation="../common/types.xsd"/>
+  <xs:import namespace="http://example.com/fleet/vehicle" schemaLocation="vehicle.xsd"/>
+
+  <xs:annotation>
+    <xs:documentation>
+      Personnel types for the fleet management system.
+      Defines operators, qualifications, and vehicle assignments.
+    </xs:documentation>
+  </xs:annotation>
+
+  <!-- ===================================================================
+       Simple types
+       =================================================================== -->
+
+  <xs:simpleType name="RankSimpleType">
+    <xs:annotation>
+      <xs:documentation>Personnel rank or grade.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="E1"/>
+      <xs:enumeration value="E2"/>
+      <xs:enumeration value="E3"/>
+      <xs:enumeration value="E4"/>
+      <xs:enumeration value="E5"/>
+      <xs:enumeration value="E6"/>
+      <xs:enumeration value="E7"/>
+      <xs:enumeration value="E8"/>
+      <xs:enumeration value="E9"/>
+      <xs:enumeration value="O1"/>
+      <xs:enumeration value="O2"/>
+      <xs:enumeration value="O3"/>
+      <xs:enumeration value="O4"/>
+      <xs:enumeration value="O5"/>
+      <xs:enumeration value="O6"/>
+      <xs:enumeration value="CIVILIAN"/>
+      <xs:enumeration value="CONTRACTOR"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="ClearanceLevelSimpleType">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="NONE"/>
+      <xs:enumeration value="CONFIDENTIAL"/>
+      <xs:enumeration value="SECRET"/>
+      <xs:enumeration value="TOP_SECRET"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="ServiceIdType">
+    <xs:annotation>
+      <xs:documentation>A 10-digit service identification number.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:token">
+      <xs:length value="10"/>
+      <xs:pattern value="[0-9]{10}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- ===================================================================
+       Complex types — personnel
+       =================================================================== -->
+
+  <xs:complexType name="PersonType">
+    <xs:annotation>
+      <xs:documentation>
+        A person in the fleet management system. Extends IdentifiableType
+        for identifier and timestamp fields.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:complexContent>
+      <xs:extension base="common:IdentifiableType">
+        <xs:sequence>
+          <xs:element name="ServiceId" type="pers:ServiceIdType"/>
+          <xs:element name="LastName" type="common:ShortStringType"/>
+          <xs:element name="FirstName" type="common:ShortStringType"/>
+          <xs:element name="Rank" type="pers:RankSimpleType"/>
+          <xs:element name="ClearanceLevel" type="pers:ClearanceLevelSimpleType"/>
+          <xs:element name="Callsign" type="common:CallsignType" minOccurs="0"/>
+          <xs:element name="Qualification" type="pers:QualificationType" minOccurs="0" maxOccurs="unbounded"/>
+          <xs:element name="CurrentAssignment" type="pers:VehicleAssignmentType" minOccurs="0"/>
+        </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Complex types — qualifications
+       =================================================================== -->
+
+  <xs:complexType name="QualificationType">
+    <xs:annotation>
+      <xs:documentation>
+        A qualification or certification held by a person,
+        such as a vehicle operation license or special training.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="QualificationName" type="common:ShortStringType"/>
+      <xs:element name="IssuedDate" type="xs:date"/>
+      <xs:element name="ExpirationDate" type="xs:date" minOccurs="0"/>
+      <xs:element name="IssuingAuthority" type="common:ShortStringType" minOccurs="0"/>
+      <xs:element ref="pers:QualificationCategoryAbstract"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Substitution group for qualification categories -->
+
+  <xs:element name="QualificationCategoryAbstract" abstract="true" type="xs:string"/>
+  <xs:element name="OperatorLicense" type="xs:string" substitutionGroup="pers:QualificationCategoryAbstract">
+    <xs:annotation>
+      <xs:documentation>Licensed to operate a specific vehicle class.</xs:documentation>
+    </xs:annotation>
+  </xs:element>
+  <xs:element name="MaintenanceCertification" type="xs:string" substitutionGroup="pers:QualificationCategoryAbstract">
+    <xs:annotation>
+      <xs:documentation>Certified to perform maintenance on a vehicle class.</xs:documentation>
+    </xs:annotation>
+  </xs:element>
+  <xs:element name="SafetyTraining" type="xs:string" substitutionGroup="pers:QualificationCategoryAbstract"/>
+
+  <!-- ===================================================================
+       Complex types — vehicle assignment (association pattern)
+       =================================================================== -->
+
+  <xs:complexType name="VehicleAssignmentType">
+    <xs:annotation>
+      <xs:documentation>
+        Associates a person with a vehicle they are assigned to operate.
+        Exercises cross-namespace type references.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="VehicleRef" type="common:UuidType">
+        <xs:annotation>
+          <xs:documentation>Reference to the assigned vehicle's identifier.</xs:documentation>
+        </xs:annotation>
+      </xs:element>
+      <xs:element name="Role" type="pers:AssignmentRoleSimpleType"/>
+      <xs:element name="EffectiveDate" type="xs:date"/>
+      <xs:element name="ExpirationDate" type="xs:date" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:simpleType name="AssignmentRoleSimpleType">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="PRIMARY_OPERATOR"/>
+      <xs:enumeration value="SECONDARY_OPERATOR"/>
+      <xs:enumeration value="CREW_MEMBER"/>
+      <xs:enumeration value="MAINTENANCE_LEAD"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- ===================================================================
+       Top-level elements
+       =================================================================== -->
+
+  <xs:element name="Person" type="pers:PersonType"/>
+  <xs:element name="VehicleAssignment" type="pers:VehicleAssignmentType"/>
+
+</xs:schema>

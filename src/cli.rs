@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use crate::transform::profile::SchemaProfile;
+
 /// schemata - XSD to Protocol Buffers converter for NIEM-based schemas
 #[derive(Debug, Parser)]
 #[command(name = "schemata", version, about)]
@@ -20,5 +22,9 @@ pub enum Command {
         /// Output directory for generated .proto files
         #[arg(short, long)]
         output: PathBuf,
+
+        /// Schema profile controlling NIEM-specific transforms
+        #[arg(long, value_enum, default_value_t = SchemaProfile::Niem)]
+        profile: SchemaProfile,
     },
 }

@@ -884,11 +884,11 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // uc2-core-types.xsd
+    // common-types.xsd
     // -----------------------------------------------------------------------
 
     #[test]
-    fn uc2_core_types_confidence_code_simple_type_has_6_variants() {
+    fn common_types_confidence_code_simple_type_has_6_variants() {
         let schema = parse_inline(CORE_TYPES_XSD);
         let st = schema
             .simple_types
@@ -907,7 +907,7 @@ mod tests {
     }
 
     #[test]
-    fn uc2_core_types_wgs84_extends_object_type() {
+    fn common_types_wgs84_extends_object_type() {
         let schema = parse_inline(CORE_TYPES_XSD);
         let ct = schema
             .complex_types
@@ -926,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn uc2_core_types_uuid_pattern() {
+    fn common_types_uuid_pattern() {
         let schema = parse_inline(CORE_TYPES_XSD);
         let st = schema
             .simple_types
@@ -943,7 +943,7 @@ mod tests {
     }
 
     #[test]
-    fn uc2_core_types_string64_length() {
+    fn common_types_string64_length() {
         let schema = parse_inline(CORE_TYPES_XSD);
         let st = schema
             .simple_types
@@ -959,7 +959,7 @@ mod tests {
     }
 
     #[test]
-    fn uc2_core_types_substitution_group() {
+    fn common_types_substitution_group() {
         let schema = parse_inline(CORE_TYPES_XSD);
         let el = schema
             .elements
@@ -974,23 +974,23 @@ mod tests {
     }
 
     #[test]
-    fn uc2_core_types_imports() {
+    fn common_types_imports() {
         let schema = parse_inline(CORE_TYPES_XSD);
         assert_eq!(schema.imports.len(), 3);
     }
 
     // -----------------------------------------------------------------------
-    // uc2-core.xsd
+    // example-core.xsd
     // -----------------------------------------------------------------------
 
     #[test]
-    fn uc2_core_info_object_has_choice_with_14_elements() {
-        let schema = parse_inline(UC2_CORE_XSD);
+    fn example_core_composite_object_has_choice_with_14_elements() {
+        let schema = parse_inline(EXAMPLE_CORE_XSD);
         let ct = schema
             .complex_types
             .iter()
-            .find(|c| c.name.as_deref() == Some("CoreInformationObjectType"))
-            .expect("CoreInformationObjectType not found");
+            .find(|c| c.name.as_deref() == Some("CompositeObjectType"))
+            .expect("CompositeObjectType not found");
         match &ct.content {
             ComplexTypeContent::ComplexExtension { base, compositor } => {
                 assert_eq!(base.local_name, "ObjectType");
@@ -1011,23 +1011,23 @@ mod tests {
     }
 
     #[test]
-    fn uc2_core_substitution_group() {
-        let schema = parse_inline(UC2_CORE_XSD);
+    fn example_core_substitution_group() {
+        let schema = parse_inline(EXAMPLE_CORE_XSD);
         let el = schema
             .elements
             .iter()
-            .find(|e| e.name.as_deref() == Some("CoreInformationObject"))
-            .expect("CoreInformationObject not found");
+            .find(|e| e.name.as_deref() == Some("CompositeObject"))
+            .expect("CompositeObject not found");
         let sg = el
             .substitution_group
             .as_ref()
             .expect("should have substitutionGroup");
-        assert_eq!(sg.local_name, "InformationObjectAbstract");
+        assert_eq!(sg.local_name, "CompositeObjectAbstract");
     }
 
     #[test]
-    fn uc2_core_imports() {
-        let schema = parse_inline(UC2_CORE_XSD);
+    fn example_core_imports() {
+        let schema = parse_inline(EXAMPLE_CORE_XSD);
         // 10 import directives
         assert_eq!(schema.imports.len(), 10);
     }

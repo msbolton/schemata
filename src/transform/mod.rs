@@ -5,6 +5,9 @@
 //! `.proto` file for that namespace.
 
 pub mod naming;
+pub mod profile;
+
+use self::profile::SchemaProfile;
 
 use std::collections::BTreeSet;
 
@@ -25,7 +28,11 @@ const NIEM_XS_NAMESPACE: &str = "http://release.niem.gov/niem/proxy/niem-xs/5.0/
 /// Transform a single namespace from the XSD registry into a [`ProtoFile`].
 ///
 /// Returns `None` if the namespace has no schema in the registry.
-pub fn transform_schema(ns: &NamespaceUri, registry: &TypeRegistry) -> Option<ProtoFile> {
+pub fn transform_schema(
+    ns: &NamespaceUri,
+    registry: &TypeRegistry,
+    profile: SchemaProfile,
+) -> Option<ProtoFile> {
     let schema = registry.schemas.get(ns)?;
     let package = namespace_to_package(ns.as_str());
 
@@ -34,6 +41,7 @@ pub fn transform_schema(ns: &NamespaceUri, registry: &TypeRegistry) -> Option<Pr
         current_ns: ns.clone(),
         current_package: package.clone(),
         imports: BTreeSet::new(),
+        profile,
     };
 
     let mut messages = Vec::new();
@@ -51,13 +59,14 @@ pub fn transform_schema(ns: &NamespaceUri, registry: &TypeRegistry) -> Option<Pr
         if let Some(name) = &ct.name {
             // Skip NIEM wrapper types (Rule 3) - they get collapsed to the
             // underlying enum or primitive at usage sites.
-            if ctx.is_niem_wrapper(ct) {
+            if ctx.profile.should_collapse_niem_wrappers() && ctx.is_niem_wrapper(ct) {
                 continue;
             }
 
             // Skip structures namespace abstract base types - they are
             // handled specially when extending types reference them.
-            if ns.as_str() == STRUCTURES_NAMESPACE {
+            if ctx.profile.should_skip_structures_namespace() && ns.as_str() == STRUCTURES_NAMESPACE
+            {
                 continue;
             }
 
@@ -93,6 +102,7 @@ struct TransformContext<'a> {
     current_ns: NamespaceUri,
     current_package: String,
     imports: BTreeSet<String>,
+    profile: SchemaProfile,
 }
 
 impl<'a> TransformContext<'a> {
@@ -282,7 +292,9 @@ impl<'a> TransformContext<'a> {
         oneofs: &mut Vec<ProtoOneof>,
         field_number: &mut u32,
     ) {
-        if base.namespace.as_str() == STRUCTURES_NAMESPACE {
+        if self.profile.should_inline_structures_base()
+            && base.namespace.as_str() == STRUCTURES_NAMESPACE
+        {
             // Inline the structures attributes.
             self.emit_structures_attributes(fields, field_number);
 
@@ -449,8 +461,8 @@ impl<'a> TransformContext<'a> {
         let elem_qname = self.element_qname(elem);
 
         if let Some(ref qname) = elem_qname {
-            // Rule 6: augmentation points
-            if qname.local_name.ends_with("AugmentationPoint") {
+            // Rule 6: augmentation points (NIEM-specific)
+            if self.profile.is_augmentation_point(qname) {
                 if let Some(augmentations) = self.registry.get_augmentations(qname) {
                     if !augmentations.is_empty() {
                         let oneof = self.build_augmentation_oneof(
@@ -642,10 +654,11 @@ impl<'a> TransformContext<'a> {
         fields: &mut Vec<ProtoField>,
         field_number: &mut u32,
     ) {
-        // Skip structures:SimpleObjectAttributeGroup (already handled when
-        // inlining structures base).
         for group_ref in attr_group_refs {
-            if group_ref.namespace.as_str() == STRUCTURES_NAMESPACE
+            // Skip structures:SimpleObjectAttributeGroup (already handled when
+            // inlining structures base).
+            if self.profile.should_skip_structures_attributes()
+                && group_ref.namespace.as_str() == STRUCTURES_NAMESPACE
                 && group_ref.local_name == "SimpleObjectAttributeGroup"
             {
                 continue;
@@ -661,9 +674,11 @@ impl<'a> TransformContext<'a> {
 
         for attr in attrs {
             // Skip structures: namespace attributes (already handled).
-            if let Some(ref attr_ref) = attr.attribute_ref {
-                if attr_ref.namespace.as_str() == STRUCTURES_NAMESPACE {
-                    continue;
+            if self.profile.should_skip_structures_attributes() {
+                if let Some(ref attr_ref) = attr.attribute_ref {
+                    if attr_ref.namespace.as_str() == STRUCTURES_NAMESPACE {
+                        continue;
+                    }
                 }
             }
             self.emit_attribute_field(attr, fields, field_number);
@@ -754,15 +769,19 @@ impl<'a> TransformContext<'a> {
         }
 
         // Rule 4: NIEM proxy types -> unwrap to proto builtins.
-        if qname.namespace.as_str() == NIEM_XS_NAMESPACE {
+        if self.profile.should_use_niem_proxy_mapping()
+            && qname.namespace.as_str() == NIEM_XS_NAMESPACE
+        {
             return niem_xs_to_proto(&qname.local_name);
         }
 
         // Rule 3: Check if the referenced type is a NIEM wrapper.
-        if let Some(ct) = self.registry.resolve_complex_type(qname) {
-            let ct_clone = ct.clone();
-            if self.is_niem_wrapper(&ct_clone) {
-                return self.unwrap_niem_wrapper(&ct_clone);
+        if self.profile.should_collapse_niem_wrappers() {
+            if let Some(ct) = self.registry.resolve_complex_type(qname) {
+                let ct_clone = ct.clone();
+                if self.is_niem_wrapper(&ct_clone) {
+                    return self.unwrap_niem_wrapper(&ct_clone);
+                }
             }
         }
 
@@ -968,19 +987,20 @@ fn niem_xs_to_proto(local_name: &str) -> String {
 mod tests {
     use super::*;
     use crate::test_fixtures::build_test_registry;
+    use crate::transform::profile::SchemaProfile;
 
     // -- Integration: transform a namespace ---------------------------------
 
     #[test]
-    fn transform_battlefield_entity_namespace() {
+    fn transform_vehicle_namespace() {
         let reg = build_test_registry();
-        let ns =
-            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string());
+        let ns = NamespaceUri("http://example.com/schemas/vehicle".to_string());
 
-        let proto = transform_schema(&ns, &reg).expect("should produce a ProtoFile");
+        let proto =
+            transform_schema(&ns, &reg, SchemaProfile::Niem).expect("should produce a ProtoFile");
 
         assert_eq!(proto.syntax, "proto3");
-        assert_eq!(proto.package, "uc2.battlefield_entity.v4");
+        assert_eq!(proto.package, "example_com.schemas.vehicle");
         assert!(
             !proto.messages.is_empty(),
             "should have at least one message"
@@ -988,21 +1008,20 @@ mod tests {
     }
 
     #[test]
-    fn battlefield_entity_type_has_expected_fields() {
+    fn vehicle_type_has_expected_fields() {
         let reg = build_test_registry();
-        let ns =
-            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string());
+        let ns = NamespaceUri("http://example.com/schemas/vehicle".to_string());
 
-        let proto = transform_schema(&ns, &reg).unwrap();
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
-        let be_msg = proto
+        let veh_msg = proto
             .messages
             .iter()
-            .find(|m| m.name == "BattlefieldEntityType")
-            .expect("should have BattlefieldEntityType message");
+            .find(|m| m.name == "VehicleType")
+            .expect("should have VehicleType message");
 
         // Should have structures attributes (id, ref, uri, metadata).
-        let field_names: Vec<&str> = be_msg.fields.iter().map(|f| f.name.as_str()).collect();
+        let field_names: Vec<&str> = veh_msg.fields.iter().map(|f| f.name.as_str()).collect();
         assert!(
             field_names.contains(&"structures_id"),
             "should have structures_id field, got: {field_names:?}"
@@ -1021,7 +1040,7 @@ mod tests {
         );
 
         // Should have audit_record field (repeated).
-        let audit_field = be_msg
+        let audit_field = veh_msg
             .fields
             .iter()
             .find(|f| f.name == "audit_record")
@@ -1034,82 +1053,80 @@ mod tests {
     }
 
     #[test]
-    fn battle_damage_assessment_type_has_substitution_oneof() {
+    fn inspection_report_type_has_substitution_oneof() {
         let reg = build_test_registry();
-        let ns =
-            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string());
+        let ns = NamespaceUri("http://example.com/schemas/vehicle".to_string());
 
-        let proto = transform_schema(&ns, &reg).unwrap();
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
-        // BattleDamageAssessmentType references DamageCodeAbstract which has
-        // a substitution group (DamageCode). This should produce a oneof.
-        let bda_msg = proto
+        // InspectionReportType references StatusCodeAbstract which has
+        // a substitution group (StatusCode). This should produce a oneof.
+        let ir_msg = proto
             .messages
             .iter()
-            .find(|m| m.name == "BattleDamageAssessmentType")
-            .expect("should have BattleDamageAssessmentType message");
+            .find(|m| m.name == "InspectionReportType")
+            .expect("should have InspectionReportType message");
 
-        let oneof_names: Vec<&str> = bda_msg.oneofs.iter().map(|o| o.name.as_str()).collect();
+        let oneof_names: Vec<&str> = ir_msg.oneofs.iter().map(|o| o.name.as_str()).collect();
         assert!(
             !oneof_names.is_empty(),
-            "BattleDamageAssessmentType should have a oneof for DamageCodeAbstract substitution group, got: {oneof_names:?}"
+            "InspectionReportType should have a oneof for StatusCodeAbstract substitution group, got: {oneof_names:?}"
         );
 
-        // The oneof should contain "damage_code" as one of its members.
-        let damage_oneof = bda_msg
+        // The oneof should contain "status_code" as one of its members.
+        let status_oneof = ir_msg
             .oneofs
             .iter()
-            .find(|o| o.name.contains("damage_code"))
-            .expect("should have a oneof related to damage_code");
+            .find(|o| o.name.contains("status_code"))
+            .expect("should have a oneof related to status_code");
 
-        let field_names: Vec<&str> = damage_oneof
+        let field_names: Vec<&str> = status_oneof
             .fields
             .iter()
             .map(|f| f.name.as_str())
             .collect();
         assert!(
-            field_names.contains(&"damage_code"),
-            "damage oneof should contain damage_code, got: {field_names:?}"
+            field_names.contains(&"status_code"),
+            "status oneof should contain status_code, got: {field_names:?}"
         );
     }
 
     #[test]
-    fn battlefield_entity_type_augmentation_point_omitted_when_no_augmentations() {
+    fn vehicle_type_augmentation_point_omitted_when_no_augmentations() {
         let reg = build_test_registry();
-        let ns =
-            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string());
+        let ns = NamespaceUri("http://example.com/schemas/vehicle".to_string());
 
-        let proto = transform_schema(&ns, &reg).unwrap();
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
-        let be_msg = proto
+        let veh_msg = proto
             .messages
             .iter()
-            .find(|m| m.name == "BattlefieldEntityType")
-            .expect("should have BattlefieldEntityType message");
+            .find(|m| m.name == "VehicleType")
+            .expect("should have VehicleType message");
 
-        // BattlefieldEntityAugmentationPoint has no concrete augmentations
+        // VehicleAugmentationPoint has no concrete augmentations
         // in the test dataset, so it should NOT appear as a field or oneof.
-        let has_aug_field = be_msg
+        let has_aug_field = veh_msg
             .fields
             .iter()
             .any(|f| f.name.contains("augmentation"));
-        let has_aug_oneof = be_msg
+        let has_aug_oneof = veh_msg
             .oneofs
             .iter()
             .any(|o| o.name.contains("augmentation"));
 
         assert!(
             !has_aug_field && !has_aug_oneof,
-            "BattlefieldEntityAugmentationPoint should be omitted when no augmentations exist"
+            "VehicleAugmentationPoint should be omitted when no augmentations exist"
         );
     }
 
     #[test]
     fn confidence_code_simple_type_becomes_enum() {
         let reg = build_test_registry();
-        let ns = NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string());
+        let ns = NamespaceUri("http://example.com/schemas/common-types".to_string());
 
-        let proto = transform_schema(&ns, &reg).unwrap();
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
         let confidence_enum = proto
             .enums
@@ -1154,9 +1171,9 @@ mod tests {
     #[test]
     fn niem_wrapper_types_are_collapsed() {
         let reg = build_test_registry();
-        let ns = NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string());
+        let ns = NamespaceUri("http://example.com/schemas/common-types".to_string());
 
-        let proto = transform_schema(&ns, &reg).unwrap();
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
         // CapabilityConfidenceCodeType is a NIEM wrapper around
         // ConfidenceCodeSimpleType. It should NOT appear as a message.
@@ -1171,34 +1188,34 @@ mod tests {
     }
 
     #[test]
-    fn core_information_object_type_has_choice_oneof() {
+    fn composite_object_type_has_choice_oneof() {
         let reg = build_test_registry();
-        let ns = NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-core".to_string());
+        let ns = NamespaceUri("http://example.com/schemas/core".to_string());
 
-        let proto = transform_schema(&ns, &reg).unwrap();
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
-        let cio_msg = proto
+        let co_msg = proto
             .messages
             .iter()
-            .find(|m| m.name == "CoreInformationObjectType")
-            .expect("should have CoreInformationObjectType message");
+            .find(|m| m.name == "CompositeObjectType")
+            .expect("should have CompositeObjectType message");
 
         // Should have a oneof for the choice.
         assert!(
-            !cio_msg.oneofs.is_empty(),
-            "CoreInformationObjectType should have at least one oneof for the xs:choice"
+            !co_msg.oneofs.is_empty(),
+            "CompositeObjectType should have at least one oneof for the xs:choice"
         );
 
-        // The choice should contain battlefield_entity as one of the options.
-        let choice_oneof = &cio_msg.oneofs[0];
+        // The choice should contain vehicle as one of the options.
+        let choice_oneof = &co_msg.oneofs[0];
         let choice_field_names: Vec<&str> = choice_oneof
             .fields
             .iter()
             .map(|f| f.name.as_str())
             .collect();
         assert!(
-            choice_field_names.contains(&"battlefield_entity"),
-            "choice oneof should contain battlefield_entity, got: {choice_field_names:?}"
+            choice_field_names.contains(&"vehicle"),
+            "choice oneof should contain vehicle, got: {choice_field_names:?}"
         );
     }
 
@@ -1207,7 +1224,7 @@ mod tests {
         let reg = build_test_registry();
         let ns = NamespaceUri(STRUCTURES_NAMESPACE.to_string());
 
-        let proto = transform_schema(&ns, &reg).unwrap();
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
         // We skip structures types (they are inlined into extending types).
         assert!(
@@ -1222,7 +1239,7 @@ mod tests {
         let ns = NamespaceUri("http://example.com/nonexistent".to_string());
 
         assert!(
-            transform_schema(&ns, &reg).is_none(),
+            transform_schema(&ns, &reg, SchemaProfile::Niem).is_none(),
             "should return None for unknown namespace"
         );
     }
@@ -1230,9 +1247,9 @@ mod tests {
     #[test]
     fn field_numbers_are_sequential_starting_from_1() {
         let reg = build_test_registry();
-        let ns = NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string());
+        let ns = NamespaceUri("http://example.com/schemas/common-types".to_string());
 
-        let proto = transform_schema(&ns, &reg).unwrap();
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
         for msg in &proto.messages {
             // Collect all field numbers (from both regular fields and oneofs).
@@ -1270,17 +1287,14 @@ mod tests {
     #[test]
     fn imports_are_tracked() {
         let reg = build_test_registry();
-        let ns = NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-core".to_string());
+        let ns = NamespaceUri("http://example.com/schemas/core".to_string());
 
-        let proto = transform_schema(&ns, &reg).unwrap();
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
-        // uc2-core references be:BattlefieldEntity, so it should import that package.
+        // core references veh:Vehicle, so it should import that package.
         assert!(
-            proto
-                .imports
-                .iter()
-                .any(|i| i.contains("battlefield_entity")),
-            "should import battlefield_entity package, got: {:?}",
+            proto.imports.iter().any(|i| i.contains("vehicle")),
+            "should import vehicle package, got: {:?}",
             proto.imports
         );
     }
@@ -1312,5 +1326,279 @@ mod tests {
         assert_eq!(xsd_builtin_to_proto("ID"), "string");
         assert_eq!(xsd_builtin_to_proto("IDREF"), "string");
         assert_eq!(xsd_builtin_to_proto("IDREFS"), "string");
+    }
+
+    // -- Generic profile tests -----------------------------------------------
+    //
+    // These use small, self-contained inline XSD fixtures with synthetic
+    // namespaces so they are independent of any real-world schema set.
+
+    use crate::resolver::build_type_registry as build_reg;
+    use crate::test_fixtures::{NIEM_XS_XSD, STRUCTURES_XSD};
+    use crate::xsd::parser::parse_schema;
+    use std::path::{Path, PathBuf};
+
+    /// Build a minimal registry from inline XSD strings.
+    fn generic_registry(xsds: &[&str]) -> TypeRegistry {
+        let mut schemas = Vec::new();
+        for xml in xsds {
+            let schema =
+                parse_schema(xml, Path::new("test.xsd")).expect("failed to parse inline XSD");
+            schemas.push((schema, PathBuf::from("test.xsd")));
+        }
+        build_reg(schemas)
+    }
+
+    #[test]
+    fn generic_structures_namespace_produces_messages() {
+        let reg = generic_registry(&[STRUCTURES_XSD]);
+        let ns = NamespaceUri(STRUCTURES_NAMESPACE.to_string());
+
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+
+        assert!(
+            !proto.messages.is_empty(),
+            "generic profile should emit messages for structures namespace"
+        );
+    }
+
+    #[test]
+    fn generic_niem_wrapper_types_not_collapsed() {
+        // A simpleContent/extension wrapping an enum with only
+        // SimpleObjectAttributeGroup — a classic NIEM wrapper pattern.
+        let wrapper_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <xs:schema targetNamespace="http://example.com/wrapper"
+            xmlns:w="http://example.com/wrapper"
+            xmlns:structures="http://release.niem.gov/niem/structures/5.0/"
+            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:import namespace="http://release.niem.gov/niem/structures/5.0/"/>
+          <xs:simpleType name="ColorSimpleType">
+            <xs:restriction base="xs:token">
+              <xs:enumeration value="RED"/>
+              <xs:enumeration value="GREEN"/>
+            </xs:restriction>
+          </xs:simpleType>
+          <xs:complexType name="ColorCodeType">
+            <xs:simpleContent>
+              <xs:extension base="w:ColorSimpleType">
+                <xs:attributeGroup ref="structures:SimpleObjectAttributeGroup"/>
+              </xs:extension>
+            </xs:simpleContent>
+          </xs:complexType>
+        </xs:schema>"#;
+
+        let reg = generic_registry(&[STRUCTURES_XSD, wrapper_xsd]);
+        let ns = NamespaceUri("http://example.com/wrapper".to_string());
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+
+        let wrapper_msg = proto
+            .messages
+            .iter()
+            .find(|m| m.name == "ColorCodeType")
+            .expect("generic profile should emit ColorCodeType as a message");
+
+        let field_names: Vec<&str> = wrapper_msg.fields.iter().map(|f| f.name.as_str()).collect();
+        assert!(
+            field_names.contains(&"value"),
+            "wrapper message should have a 'value' field, got: {field_names:?}"
+        );
+    }
+
+    #[test]
+    fn generic_extension_base_is_composition_field() {
+        // A type extending structures:ObjectType — in generic mode the base
+        // should become a composition field, not inlined attributes.
+        let ext_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <xs:schema targetNamespace="http://example.com/ext"
+            xmlns:e="http://example.com/ext"
+            xmlns:structures="http://release.niem.gov/niem/structures/5.0/"
+            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:import namespace="http://release.niem.gov/niem/structures/5.0/"/>
+          <xs:complexType name="VehicleType">
+            <xs:complexContent>
+              <xs:extension base="structures:ObjectType">
+                <xs:sequence>
+                  <xs:element name="Make" type="xs:string"/>
+                </xs:sequence>
+              </xs:extension>
+            </xs:complexContent>
+          </xs:complexType>
+        </xs:schema>"#;
+
+        let reg = generic_registry(&[STRUCTURES_XSD, ext_xsd]);
+        let ns = NamespaceUri("http://example.com/ext".to_string());
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+
+        let msg = proto
+            .messages
+            .iter()
+            .find(|m| m.name == "VehicleType")
+            .expect("should have VehicleType message");
+
+        let field_names: Vec<&str> = msg.fields.iter().map(|f| f.name.as_str()).collect();
+        assert!(
+            !field_names.contains(&"structures_id"),
+            "generic profile should NOT inline structures_id, got: {field_names:?}"
+        );
+        assert!(
+            field_names.contains(&"object"),
+            "generic profile should have 'object' composition field for ObjectType base, got: {field_names:?}"
+        );
+    }
+
+    #[test]
+    fn generic_augmentation_point_not_special() {
+        // An element named *AugmentationPoint — in generic mode it should NOT
+        // receive special NIEM augmentation handling.
+        let aug_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <xs:schema targetNamespace="http://example.com/aug"
+            xmlns:a="http://example.com/aug"
+            xmlns:structures="http://release.niem.gov/niem/structures/5.0/"
+            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:import namespace="http://release.niem.gov/niem/structures/5.0/"/>
+          <xs:element name="ThingAugmentationPoint" abstract="true"/>
+          <xs:element name="ExtraField" type="xs:string" substitutionGroup="a:ThingAugmentationPoint"/>
+          <xs:complexType name="ThingType">
+            <xs:complexContent>
+              <xs:extension base="structures:ObjectType">
+                <xs:sequence>
+                  <xs:element ref="a:ThingAugmentationPoint" minOccurs="0" maxOccurs="unbounded"/>
+                </xs:sequence>
+              </xs:extension>
+            </xs:complexContent>
+          </xs:complexType>
+        </xs:schema>"#;
+
+        let reg = generic_registry(&[STRUCTURES_XSD, aug_xsd]);
+        let ns = NamespaceUri("http://example.com/aug".to_string());
+
+        let proto_niem = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
+        let proto_generic = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+
+        // In NIEM mode the augmentation point produces a special oneof.
+        let niem_msg = proto_niem
+            .messages
+            .iter()
+            .find(|m| m.name == "ThingType")
+            .unwrap();
+        let niem_has_aug_oneof = niem_msg
+            .oneofs
+            .iter()
+            .any(|o| o.name.contains("augmentation"));
+        assert!(
+            niem_has_aug_oneof,
+            "NIEM profile should produce augmentation oneof"
+        );
+
+        // In generic mode the same element is treated as a regular
+        // substitution group (since it is abstract).
+        let generic_msg = proto_generic
+            .messages
+            .iter()
+            .find(|m| m.name == "ThingType")
+            .unwrap();
+        let generic_oneof = generic_msg
+            .oneofs
+            .iter()
+            .find(|o| o.name.contains("thing_augmentation_point"));
+        assert!(
+            generic_oneof.is_some(),
+            "generic profile should handle augmentation point as a regular substitution group oneof"
+        );
+    }
+
+    #[test]
+    fn generic_niem_proxy_types_not_collapsed() {
+        // A type referencing niem-xs:string — in generic mode it should NOT be
+        // collapsed to proto `string`.
+        let proxy_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <xs:schema targetNamespace="http://example.com/proxy"
+            xmlns:p="http://example.com/proxy"
+            xmlns:structures="http://release.niem.gov/niem/structures/5.0/"
+            xmlns:niem-xs="http://release.niem.gov/niem/proxy/niem-xs/5.0/"
+            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:import namespace="http://release.niem.gov/niem/structures/5.0/"/>
+          <xs:import namespace="http://release.niem.gov/niem/proxy/niem-xs/5.0/"/>
+          <xs:element name="Label" type="niem-xs:string"/>
+          <xs:complexType name="ItemType">
+            <xs:complexContent>
+              <xs:extension base="structures:ObjectType">
+                <xs:sequence>
+                  <xs:element ref="p:Label"/>
+                </xs:sequence>
+              </xs:extension>
+            </xs:complexContent>
+          </xs:complexType>
+        </xs:schema>"#;
+
+        let reg = generic_registry(&[STRUCTURES_XSD, NIEM_XS_XSD, proxy_xsd]);
+        let ns = NamespaceUri("http://example.com/proxy".to_string());
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+
+        let msg = proto
+            .messages
+            .iter()
+            .find(|m| m.name == "ItemType")
+            .unwrap();
+
+        let label_field = msg
+            .fields
+            .iter()
+            .find(|f| f.name == "label")
+            .expect("should have label field");
+
+        assert_ne!(
+            label_field.type_name, "string",
+            "generic profile should not collapse niem-xs:string to proto string"
+        );
+        assert!(
+            label_field.type_name.contains("niem"),
+            "generic profile should reference niem proxy type: {}",
+            label_field.type_name
+        );
+    }
+
+    #[test]
+    fn generic_structures_attributes_not_skipped() {
+        // A type with structures:SimpleObjectAttributeGroup — in generic mode
+        // those attributes should be emitted, not silently dropped.
+        let attr_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <xs:schema targetNamespace="http://example.com/attrs"
+            xmlns:at="http://example.com/attrs"
+            xmlns:structures="http://release.niem.gov/niem/structures/5.0/"
+            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:import namespace="http://release.niem.gov/niem/structures/5.0/"/>
+          <xs:complexType name="WidgetType">
+            <xs:complexContent>
+              <xs:extension base="structures:ObjectType">
+                <xs:sequence>
+                  <xs:element name="Name" type="xs:string"/>
+                </xs:sequence>
+              </xs:extension>
+            </xs:complexContent>
+          </xs:complexType>
+        </xs:schema>"#;
+
+        let reg = generic_registry(&[STRUCTURES_XSD, attr_xsd]);
+        let ns = NamespaceUri("http://example.com/attrs".to_string());
+        let proto = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+
+        let msg = proto
+            .messages
+            .iter()
+            .find(|m| m.name == "WidgetType")
+            .expect("should have WidgetType message");
+
+        let field_names: Vec<&str> = msg.fields.iter().map(|f| f.name.as_str()).collect();
+        // In generic mode, structures attributes are NOT inlined via the
+        // special NIEM path. The ObjectType base becomes a composition field.
+        assert!(
+            !field_names.contains(&"structures_id"),
+            "generic profile should not inline structures attributes, got: {field_names:?}"
+        );
+        assert!(
+            field_names.contains(&"object"),
+            "generic profile should have composition field for base, got: {field_names:?}"
+        );
     }
 }

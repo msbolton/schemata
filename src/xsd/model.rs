@@ -59,8 +59,8 @@ pub struct XsdAnnotation {
 
 /// A parsed XSD schema document.
 ///
-/// `target_namespace` is `None` only for chameleon/aggregation schemas (e.g.
-/// `uc2-sos-all.xsd`). The pipeline skips schemas without a target namespace
+/// `target_namespace` is `None` only for chameleon/aggregation schemas (those
+/// with no `targetNamespace`). The pipeline skips schemas without a target namespace
 /// during transform, so downstream code can safely require `Some`.
 #[derive(Debug, Clone)]
 pub struct XsdSchema {

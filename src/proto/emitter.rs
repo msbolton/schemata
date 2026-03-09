@@ -231,7 +231,7 @@ mod tests {
     fn test_simple_message_and_enum() {
         let file = ProtoFile {
             syntax: "proto3".to_string(),
-            package: "uc2.uc2_types.v4".to_string(),
+            package: "example_com.schemas.common_types".to_string(),
             imports: vec!["niem/structures/v5.proto".to_string()],
             options: vec![],
             enums: vec![ProtoEnum {
@@ -277,14 +277,14 @@ mod tests {
                     "A data type for a position in WGS 84 coordinates.".to_string(),
                 ),
             }],
-            source_xsd_path: Some(PathBuf::from("uc2-core-types.xsd")),
+            source_xsd_path: Some(PathBuf::from("common-types.xsd")),
         };
 
         let output = emit_proto_file(&file);
 
-        assert!(output.contains("// Generated from uc2-core-types.xsd"));
+        assert!(output.contains("// Generated from common-types.xsd"));
         assert!(output.contains("syntax = \"proto3\";"));
-        assert!(output.contains("package uc2.uc2_types.v4;"));
+        assert!(output.contains("package example_com.schemas.common_types;"));
         assert!(output.contains("import \"niem/structures/v5.proto\";"));
         assert!(output.contains("// A data type for an enumeration of Confidence types."));
         assert!(output.contains("enum ConfidenceCode {"));
@@ -633,10 +633,10 @@ mod tests {
 
     #[test]
     fn test_full_format_example() {
-        // Test the exact format from the task description
+        // Test the exact format of a complete proto file
         let file = ProtoFile {
             syntax: "proto3".to_string(),
-            package: "uc2.uc2_types.v4".to_string(),
+            package: "example_com.schemas.common_types".to_string(),
             imports: vec![
                 "niem/structures/v5.proto".to_string(),
                 "niem/niem_core/v5.proto".to_string(),
@@ -714,16 +714,16 @@ mod tests {
                     "A data type for a position in WGS 84 coordinates.".to_string(),
                 ),
             }],
-            source_xsd_path: Some(PathBuf::from("uc2-core-types.xsd")),
+            source_xsd_path: Some(PathBuf::from("common-types.xsd")),
         };
 
         let output = emit_proto_file(&file);
 
         let expected = "\
-// Generated from uc2-core-types.xsd
+// Generated from common-types.xsd
 syntax = \"proto3\";
 
-package uc2.uc2_types.v4;
+package example_com.schemas.common_types;
 
 import \"niem/niem_core/v5.proto\";
 import \"niem/structures/v5.proto\";

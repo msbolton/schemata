@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema
+    targetNamespace="http://example.com/fleet/telemetry"
+    xmlns:tel="http://example.com/fleet/telemetry"
+    xmlns:common="http://example.com/fleet/common"
+    xmlns:veh="http://example.com/fleet/vehicle"
+    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    elementFormDefault="qualified">
+
+  <xs:import namespace="http://example.com/fleet/common" schemaLocation="../common/types.xsd"/>
+  <xs:import namespace="http://example.com/fleet/vehicle" schemaLocation="vehicle.xsd"/>
+
+  <xs:annotation>
+    <xs:documentation>
+      Telemetry and sensor data types. Provides real-time position,
+      engine diagnostics, and sensor readings associated with vehicles.
+    </xs:documentation>
+  </xs:annotation>
+
+  <!-- ===================================================================
+       Simple types
+       =================================================================== -->
+
+  <xs:simpleType name="DiagnosticCodeType">
+    <xs:annotation>
+      <xs:documentation>
+        OBD-II style diagnostic trouble code.
+        Format: one letter followed by four digits (e.g. P0301, B0100).
+      </xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:token">
+      <xs:pattern value="[PBCU][0-9]{4}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="SeveritySimpleType">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="INFO"/>
+      <xs:enumeration value="WARNING"/>
+      <xs:enumeration value="ERROR"/>
+      <xs:enumeration value="CRITICAL"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="TemperatureCelsiusType">
+    <xs:annotation>
+      <xs:documentation>A temperature in degrees Celsius, -273.15 to 1000.</xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:double">
+      <xs:minInclusive value="-273.15"/>
+      <xs:maxInclusive value="1000"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- ===================================================================
+       Complex types — position report
+       =================================================================== -->
+
+  <xs:complexType name="PositionReportType">
+    <xs:annotation>
+      <xs:documentation>
+        A timestamped position report for a vehicle, including heading and speed.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="VehicleRef" type="common:UuidType"/>
+      <xs:element name="Timestamp" type="xs:dateTime"/>
+      <xs:element name="Position" type="common:CoordinateType"/>
+      <xs:element name="HeadingDegrees" type="xs:double" minOccurs="0"/>
+      <xs:element name="SpeedKmh" type="xs:double" minOccurs="0"/>
+      <xs:element name="Accuracy" type="tel:PositionAccuracyType" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="PositionAccuracyType">
+    <xs:sequence>
+      <xs:element name="HorizontalErrorMeters" type="xs:double"/>
+      <xs:element name="VerticalErrorMeters" type="xs:double" minOccurs="0"/>
+      <xs:element name="SatelliteCount" type="xs:nonNegativeInteger" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Complex types — engine diagnostics
+       =================================================================== -->
+
+  <xs:complexType name="EngineDiagnosticsType">
+    <xs:annotation>
+      <xs:documentation>
+        Engine health and diagnostic data collected from the vehicle's onboard systems.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="VehicleRef" type="common:UuidType"/>
+      <xs:element name="Timestamp" type="xs:dateTime"/>
+      <xs:element name="EngineRPM" type="xs:nonNegativeInteger" minOccurs="0"/>
+      <xs:element name="CoolantTemperature" type="tel:TemperatureCelsiusType" minOccurs="0"/>
+      <xs:element name="OilPressureKPa" type="xs:double" minOccurs="0"/>
+      <xs:element name="FuelLevelPercent" type="common:PercentageType" minOccurs="0"/>
+      <xs:element name="BatteryVoltage" type="xs:double" minOccurs="0"/>
+      <xs:element name="ActiveFault" type="tel:DiagnosticFaultType" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="DiagnosticFaultType">
+    <xs:sequence>
+      <xs:element name="Code" type="tel:DiagnosticCodeType"/>
+      <xs:element name="Severity" type="tel:SeveritySimpleType"/>
+      <xs:element name="Description" type="common:ShortStringType" minOccurs="0"/>
+      <xs:element name="FirstOccurrence" type="xs:dateTime"/>
+      <xs:element name="OccurrenceCount" type="xs:positiveInteger"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Complex types — sensor readings (abstract base + concrete variants)
+       =================================================================== -->
+
+  <xs:complexType name="SensorReadingType" abstract="true">
+    <xs:annotation>
+      <xs:documentation>
+        Abstract base for all sensor readings. Concrete subtypes provide
+        the measurement-specific fields. Exercises abstract complex type
+        with multiple concrete extensions.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="SensorId" type="common:UuidType"/>
+      <xs:element name="Timestamp" type="xs:dateTime"/>
+      <xs:element name="VehicleRef" type="common:UuidType"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="TemperatureReadingType">
+    <xs:annotation>
+      <xs:documentation>A temperature sensor reading.</xs:documentation>
+    </xs:annotation>
+    <xs:complexContent>
+      <xs:extension base="tel:SensorReadingType">
+        <xs:sequence>
+          <xs:element name="ValueCelsius" type="tel:TemperatureCelsiusType"/>
+          <xs:element name="SensorLocation" type="common:ShortStringType" minOccurs="0"/>
+        </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:complexType name="PressureReadingType">
+    <xs:complexContent>
+      <xs:extension base="tel:SensorReadingType">
+        <xs:sequence>
+          <xs:element name="ValueKPa" type="xs:double"/>
+          <xs:element name="SensorLocation" type="common:ShortStringType" minOccurs="0"/>
+        </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <xs:complexType name="VoltageReadingType">
+    <xs:complexContent>
+      <xs:extension base="tel:SensorReadingType">
+        <xs:sequence>
+          <xs:element name="ValueVolts" type="xs:double"/>
+          <xs:element name="CircuitName" type="common:ShortStringType" minOccurs="0"/>
+        </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Complex types — telemetry batch
+       =================================================================== -->
+
+  <xs:complexType name="TelemetryBatchType">
+    <xs:annotation>
+      <xs:documentation>
+        A batch of telemetry data collected over a time window.
+        Groups position reports, diagnostics, and sensor readings.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="BatchId" type="common:UuidType"/>
+      <xs:element name="CollectionStart" type="xs:dateTime"/>
+      <xs:element name="CollectionEnd" type="xs:dateTime"/>
+      <xs:element name="PositionReport" type="tel:PositionReportType" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="EngineDiagnostics" type="tel:EngineDiagnosticsType" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Top-level elements
+       =================================================================== -->
+
+  <xs:element name="PositionReport" type="tel:PositionReportType"/>
+  <xs:element name="EngineDiagnostics" type="tel:EngineDiagnosticsType"/>
+  <xs:element name="TelemetryBatch" type="tel:TelemetryBatchType"/>
+
+</xs:schema>

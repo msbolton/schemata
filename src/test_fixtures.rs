@@ -1,7 +1,8 @@
 //! Inline XSD test fixtures and registry builder.
 //!
-//! These constants provide self-contained XSD schemas that mirror the real
-//! NIEM + UC2 schema set, so integration tests do not depend on external files.
+//! These constants provide self-contained XSD schemas that exercise the NIEM
+//! patterns (extension, substitution groups, augmentation points, wrappers),
+//! so integration tests do not depend on external files.
 
 use std::path::{Path, PathBuf};
 
@@ -189,8 +190,8 @@ pub const NIEM_XS_XSD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 
 pub const CORE_TYPES_XSD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <xs:schema
-    targetNamespace="http://www.cto.mil/FNC3/UC2/Language/4/uc2-types"
-    xmlns:ct="http://www.cto.mil/FNC3/UC2/Language/4/uc2-types"
+    targetNamespace="http://example.com/schemas/common-types"
+    xmlns:ct="http://example.com/schemas/common-types"
     xmlns:structures="http://release.niem.gov/niem/structures/5.0/"
     xmlns:niem-xs="http://release.niem.gov/niem/proxy/niem-xs/5.0/"
     xmlns:nc="http://release.niem.gov/niem/niem-core/5.0/"
@@ -267,40 +268,40 @@ pub const CORE_TYPES_XSD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 
 pub const DOMAIN_XSD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <xs:schema
-    targetNamespace="http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity"
-    xmlns:be="http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity"
+    targetNamespace="http://example.com/schemas/vehicle"
+    xmlns:veh="http://example.com/schemas/vehicle"
     xmlns:structures="http://release.niem.gov/niem/structures/5.0/"
     xmlns:niem-xs="http://release.niem.gov/niem/proxy/niem-xs/5.0/"
-    xmlns:ct="http://www.cto.mil/FNC3/UC2/Language/4/uc2-types"
-    xmlns:cap="http://www.cto.mil/FNC3/UC2/Language/4/capability"
+    xmlns:ct="http://example.com/schemas/common-types"
+    xmlns:cap="http://example.com/schemas/capability"
     xmlns:xs="http://www.w3.org/2001/XMLSchema">
 
   <xs:import namespace="http://release.niem.gov/niem/structures/5.0/"/>
   <xs:import namespace="http://release.niem.gov/niem/proxy/niem-xs/5.0/"/>
-  <xs:import namespace="http://www.cto.mil/FNC3/UC2/Language/4/uc2-types"/>
-  <xs:import namespace="http://www.cto.mil/FNC3/UC2/Language/4/capability"/>
+  <xs:import namespace="http://example.com/schemas/common-types"/>
+  <xs:import namespace="http://example.com/schemas/capability"/>
 
   <!-- Complex types -->
 
-  <xs:complexType name="BattlefieldEntityType">
+  <xs:complexType name="VehicleType">
     <xs:complexContent>
       <xs:extension base="structures:ObjectType">
         <xs:sequence>
-          <xs:element ref="be:Identification"/>
-          <xs:element ref="be:EntityDetails"/>
-          <xs:element ref="be:AuditRecord" minOccurs="0" maxOccurs="unbounded"/>
-          <xs:element ref="be:BattlefieldEntityAugmentationPoint" minOccurs="0" maxOccurs="unbounded"/>
+          <xs:element ref="veh:Identification"/>
+          <xs:element ref="veh:EntityDetails"/>
+          <xs:element ref="veh:AuditRecord" minOccurs="0" maxOccurs="unbounded"/>
+          <xs:element ref="veh:VehicleAugmentationPoint" minOccurs="0" maxOccurs="unbounded"/>
         </xs:sequence>
       </xs:extension>
     </xs:complexContent>
   </xs:complexType>
 
-  <xs:complexType name="BattleDamageAssessmentType">
+  <xs:complexType name="InspectionReportType">
     <xs:complexContent>
       <xs:extension base="structures:ObjectType">
         <xs:sequence>
-          <xs:element ref="be:DamageCodeAbstract"/>
-          <xs:element ref="be:DamageDescription" minOccurs="0"/>
+          <xs:element ref="veh:StatusCodeAbstract"/>
+          <xs:element ref="veh:StatusDescription" minOccurs="0"/>
         </xs:sequence>
       </xs:extension>
     </xs:complexContent>
@@ -308,14 +309,14 @@ pub const DOMAIN_XSD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 
   <!-- Elements -->
 
-  <xs:element name="BattlefieldEntity" type="be:BattlefieldEntityType"/>
+  <xs:element name="Vehicle" type="veh:VehicleType"/>
   <xs:element name="Identification" type="niem-xs:string"/>
   <xs:element name="EntityDetails" type="niem-xs:string"/>
   <xs:element name="AuditRecord" type="niem-xs:string"/>
-  <xs:element name="BattlefieldEntityAugmentationPoint" abstract="true"/>
-  <xs:element name="DamageCodeAbstract" abstract="true"/>
-  <xs:element name="DamageCode" type="niem-xs:string" substitutionGroup="be:DamageCodeAbstract"/>
-  <xs:element name="DamageDescription" type="niem-xs:string"/>
+  <xs:element name="VehicleAugmentationPoint" abstract="true"/>
+  <xs:element name="StatusCodeAbstract" abstract="true"/>
+  <xs:element name="StatusCode" type="niem-xs:string" substitutionGroup="veh:StatusCodeAbstract"/>
+  <xs:element name="StatusDescription" type="niem-xs:string"/>
 
 </xs:schema>
 "#;
@@ -326,8 +327,8 @@ pub const DOMAIN_XSD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 
 pub const CAPABILITY_XSD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <xs:schema
-    targetNamespace="http://www.cto.mil/FNC3/UC2/Language/4/capability"
-    xmlns:cap="http://www.cto.mil/FNC3/UC2/Language/4/capability"
+    targetNamespace="http://example.com/schemas/capability"
+    xmlns:cap="http://example.com/schemas/capability"
     xmlns:structures="http://release.niem.gov/niem/structures/5.0/"
     xmlns:niem-xs="http://release.niem.gov/niem/proxy/niem-xs/5.0/"
     xmlns:xs="http://www.w3.org/2001/XMLSchema">
@@ -335,10 +336,10 @@ pub const CAPABILITY_XSD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   <xs:import namespace="http://release.niem.gov/niem/structures/5.0/"/>
   <xs:import namespace="http://release.niem.gov/niem/proxy/niem-xs/5.0/"/>
 
-  <xs:element name="CapabilityAbstract" abstract="true"/>
-  <xs:element name="CommunicationCapability" type="niem-xs:string" substitutionGroup="cap:CapabilityAbstract"/>
-  <xs:element name="SensingCapability" type="niem-xs:string" substitutionGroup="cap:CapabilityAbstract"/>
-  <xs:element name="ShapingCapability" type="niem-xs:string" substitutionGroup="cap:CapabilityAbstract"/>
+  <xs:element name="FeatureAbstract" abstract="true"/>
+  <xs:element name="NetworkFeature" type="niem-xs:string" substitutionGroup="cap:FeatureAbstract"/>
+  <xs:element name="SensorFeature" type="niem-xs:string" substitutionGroup="cap:FeatureAbstract"/>
+  <xs:element name="ActuatorFeature" type="niem-xs:string" substitutionGroup="cap:FeatureAbstract"/>
 
 </xs:schema>
 "#;
@@ -392,19 +393,19 @@ pub const MIL_OPS_XSD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 "#;
 
 // ---------------------------------------------------------------------------
-// 8. UC2_CORE_XSD
+// 8. EXAMPLE_CORE_XSD
 // ---------------------------------------------------------------------------
 
-pub const UC2_CORE_XSD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+pub const EXAMPLE_CORE_XSD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <xs:schema
-    targetNamespace="http://www.cto.mil/FNC3/UC2/Language/4/uc2-core"
-    xmlns:uc2="http://www.cto.mil/FNC3/UC2/Language/4/uc2-core"
+    targetNamespace="http://example.com/schemas/core"
+    xmlns:core="http://example.com/schemas/core"
     xmlns:structures="http://release.niem.gov/niem/structures/5.0/"
     xmlns:niem-xs="http://release.niem.gov/niem/proxy/niem-xs/5.0/"
     xmlns:nc="http://release.niem.gov/niem/niem-core/5.0/"
-    xmlns:ct="http://www.cto.mil/FNC3/UC2/Language/4/uc2-types"
-    xmlns:be="http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity"
-    xmlns:cap="http://www.cto.mil/FNC3/UC2/Language/4/capability"
+    xmlns:ct="http://example.com/schemas/common-types"
+    xmlns:veh="http://example.com/schemas/vehicle"
+    xmlns:cap="http://example.com/schemas/capability"
     xmlns:mo="http://release.niem.gov/niem/domains/militaryOperations/5.1/"
     xmlns:ns1="http://example.com/ns1"
     xmlns:ns2="http://example.com/ns2"
@@ -414,41 +415,41 @@ pub const UC2_CORE_XSD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   <xs:import namespace="http://release.niem.gov/niem/structures/5.0/"/>
   <xs:import namespace="http://release.niem.gov/niem/proxy/niem-xs/5.0/"/>
   <xs:import namespace="http://release.niem.gov/niem/niem-core/5.0/"/>
-  <xs:import namespace="http://www.cto.mil/FNC3/UC2/Language/4/uc2-types"/>
-  <xs:import namespace="http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity"/>
-  <xs:import namespace="http://www.cto.mil/FNC3/UC2/Language/4/capability"/>
+  <xs:import namespace="http://example.com/schemas/common-types"/>
+  <xs:import namespace="http://example.com/schemas/vehicle"/>
+  <xs:import namespace="http://example.com/schemas/capability"/>
   <xs:import namespace="http://release.niem.gov/niem/domains/militaryOperations/5.1/"/>
   <xs:import namespace="http://example.com/ns1"/>
   <xs:import namespace="http://example.com/ns2"/>
   <xs:import namespace="http://example.com/ns3"/>
 
-  <xs:complexType name="CoreInformationObjectType">
+  <xs:complexType name="CompositeObjectType">
     <xs:complexContent>
       <xs:extension base="structures:ObjectType">
         <xs:sequence>
           <xs:choice>
-            <xs:element ref="be:BattlefieldEntity"/>
-            <xs:element ref="uc2:Element2"/>
-            <xs:element ref="uc2:Element3"/>
-            <xs:element ref="uc2:Element4"/>
-            <xs:element ref="uc2:Element5"/>
-            <xs:element ref="uc2:Element6"/>
-            <xs:element ref="uc2:Element7"/>
-            <xs:element ref="uc2:Element8"/>
-            <xs:element ref="uc2:Element9"/>
-            <xs:element ref="uc2:Element10"/>
-            <xs:element ref="uc2:Element11"/>
-            <xs:element ref="uc2:Element12"/>
-            <xs:element ref="uc2:Element13"/>
-            <xs:element ref="uc2:Element14"/>
+            <xs:element ref="veh:Vehicle"/>
+            <xs:element ref="core:Element2"/>
+            <xs:element ref="core:Element3"/>
+            <xs:element ref="core:Element4"/>
+            <xs:element ref="core:Element5"/>
+            <xs:element ref="core:Element6"/>
+            <xs:element ref="core:Element7"/>
+            <xs:element ref="core:Element8"/>
+            <xs:element ref="core:Element9"/>
+            <xs:element ref="core:Element10"/>
+            <xs:element ref="core:Element11"/>
+            <xs:element ref="core:Element12"/>
+            <xs:element ref="core:Element13"/>
+            <xs:element ref="core:Element14"/>
           </xs:choice>
         </xs:sequence>
       </xs:extension>
     </xs:complexContent>
   </xs:complexType>
 
-  <xs:element name="InformationObjectAbstract" abstract="true"/>
-  <xs:element name="CoreInformationObject" type="uc2:CoreInformationObjectType" substitutionGroup="uc2:InformationObjectAbstract"/>
+  <xs:element name="CompositeObjectAbstract" abstract="true"/>
+  <xs:element name="CompositeObject" type="core:CompositeObjectType" substitutionGroup="core:CompositeObjectAbstract"/>
 
   <xs:element name="Element2" type="niem-xs:string"/>
   <xs:element name="Element3" type="niem-xs:string"/>
@@ -481,7 +482,7 @@ pub fn build_test_registry() -> TypeRegistry {
         parse_xsd(CAPABILITY_XSD),
         parse_xsd(NIEM_CORE_XSD),
         parse_xsd(MIL_OPS_XSD),
-        parse_xsd(UC2_CORE_XSD),
+        parse_xsd(EXAMPLE_CORE_XSD),
     ];
     build_type_registry(schemas)
 }

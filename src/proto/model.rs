@@ -5,7 +5,7 @@ use std::path::PathBuf;
 pub struct ProtoFile {
     /// Always `"proto3"`.
     pub syntax: String,
-    /// Package name, e.g. `"uc2.battlefield_entity.v4"`.
+    /// Package name, e.g. `"example_com.schemas.vehicle"`.
     pub package: String,
     /// Import paths for other proto files.
     pub imports: Vec<String>,
@@ -51,7 +51,7 @@ pub struct ProtoField {
     /// 1-indexed field number.
     pub number: u32,
     /// Proto type string, e.g. `"string"`, `"int64"`,
-    /// or a fully-qualified message type like `"uc2.core_types.v4.WGS84LocationType"`.
+    /// or a fully-qualified message type like `"example_com.schemas.common_types.WGS84LocationType"`.
     pub type_name: String,
     /// Whether the field is singular, repeated, or explicitly optional.
     pub cardinality: FieldCardinality,

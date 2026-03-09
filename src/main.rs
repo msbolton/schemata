@@ -7,6 +7,7 @@ use schemata::cli::{Cli, Command};
 use schemata::proto::emitter::emit_proto_file;
 use schemata::resolver::build_type_registry;
 use schemata::transform::naming::package_to_import_path;
+use schemata::transform::profile::SchemaProfile;
 use schemata::transform::transform_schema;
 use schemata::xsd::parser::parse_schema;
 use tracing_subscriber::EnvFilter;
@@ -19,15 +20,19 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Convert { input, output } => {
-            tracing::info!(?input, ?output, "starting conversion");
-            run_pipeline(&input, &output)
+        Command::Convert {
+            input,
+            output,
+            profile,
+        } => {
+            tracing::info!(?input, ?output, ?profile, "starting conversion");
+            run_pipeline(&input, &output, profile)
         }
     }
 }
 
 /// Run the full XSD-to-proto conversion pipeline.
-fn run_pipeline(input: &Path, output: &Path) -> Result<()> {
+fn run_pipeline(input: &Path, output: &Path, profile: SchemaProfile) -> Result<()> {
     // Stage 1: Discover XSD files.
     tracing::info!("stage 1: discovering XSD files");
     let xsd_paths = discover_xsd_files(input)?;
@@ -81,7 +86,7 @@ fn run_pipeline(input: &Path, output: &Path) -> Result<()> {
     let namespaces: Vec<_> = registry.schemas.keys().cloned().collect();
     let mut proto_files = Vec::new();
     for ns in &namespaces {
-        if let Some(proto_file) = transform_schema(ns, &registry) {
+        if let Some(proto_file) = transform_schema(ns, &registry, profile) {
             // Edge case: skip empty proto files (no messages and no enums).
             if proto_file.messages.is_empty() && proto_file.enums.is_empty() {
                 tracing::debug!(

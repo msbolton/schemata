@@ -83,7 +83,7 @@ impl TypeRegistry {
 ///
 /// Each entry in `schemas` is a `(XsdSchema, PathBuf)` pair — the parsed
 /// schema and the file it came from. Schemas without a `target_namespace`
-/// (e.g., aggregation schemas like `uc2-sos-all.xsd`) are skipped.
+/// (e.g., aggregation schemas with no `targetNamespace`) are skipped.
 pub fn build_type_registry(schemas: Vec<(XsdSchema, PathBuf)>) -> TypeRegistry {
     let mut registry = TypeRegistry {
         schemas: HashMap::new(),
@@ -219,9 +219,9 @@ mod tests {
         let expected_ns = [
             "http://release.niem.gov/niem/structures/5.0/",
             "http://release.niem.gov/niem/proxy/niem-xs/5.0/",
-            "http://www.cto.mil/FNC3/UC2/Language/4/uc2-types",
-            "http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity",
-            "http://www.cto.mil/FNC3/UC2/Language/4/capability",
+            "http://example.com/schemas/common-types",
+            "http://example.com/schemas/vehicle",
+            "http://example.com/schemas/capability",
             "http://release.niem.gov/niem/niem-core/5.0/",
         ];
 
@@ -235,49 +235,45 @@ mod tests {
     }
 
     #[test]
-    fn registry_has_battlefield_entity_type() {
+    fn registry_has_vehicle_type() {
         let reg = build_test_registry();
 
         let qname = QName {
-            namespace: NamespaceUri(
-                "http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string(),
-            ),
-            local_name: "BattlefieldEntityType".to_string(),
+            namespace: NamespaceUri("http://example.com/schemas/vehicle".to_string()),
+            local_name: "VehicleType".to_string(),
         };
         assert!(
             reg.resolve_complex_type(&qname).is_some(),
-            "BattlefieldEntityType should exist in complex_types"
+            "VehicleType should exist in complex_types"
         );
     }
 
     #[test]
-    fn capability_abstract_substitution_group() {
+    fn feature_abstract_substitution_group() {
         let reg = build_test_registry();
 
         let head = QName {
-            namespace: NamespaceUri(
-                "http://www.cto.mil/FNC3/UC2/Language/4/capability".to_string(),
-            ),
-            local_name: "CapabilityAbstract".to_string(),
+            namespace: NamespaceUri("http://example.com/schemas/capability".to_string()),
+            local_name: "FeatureAbstract".to_string(),
         };
 
         let members = reg
             .get_substitution_group(&head)
-            .expect("CapabilityAbstract should have a substitution group");
+            .expect("FeatureAbstract should have a substitution group");
 
         let member_names: HashSet<&str> = members.iter().map(|q| q.local_name.as_str()).collect();
 
         assert!(
-            member_names.contains("CommunicationCapability"),
-            "should contain CommunicationCapability, got: {member_names:?}"
+            member_names.contains("NetworkFeature"),
+            "should contain NetworkFeature, got: {member_names:?}"
         );
         assert!(
-            member_names.contains("SensingCapability"),
-            "should contain SensingCapability, got: {member_names:?}"
+            member_names.contains("SensorFeature"),
+            "should contain SensorFeature, got: {member_names:?}"
         );
         assert!(
-            member_names.contains("ShapingCapability"),
-            "should contain ShapingCapability, got: {member_names:?}"
+            member_names.contains("ActuatorFeature"),
+            "should contain ActuatorFeature, got: {member_names:?}"
         );
     }
 
@@ -310,27 +306,25 @@ mod tests {
     fn dependency_graph_has_imports() {
         let reg = build_test_registry();
 
-        let be_ns =
-            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string());
+        let veh_ns = NamespaceUri("http://example.com/schemas/vehicle".to_string());
 
         let deps = reg
             .dependency_graph
-            .get(&be_ns)
-            .expect("battlefieldEntity should be in dependency graph");
+            .get(&veh_ns)
+            .expect("vehicle should be in dependency graph");
 
-        // battlefieldEntity imports structures and capability (among others)
+        // vehicle imports structures and capability (among others)
         let structures_ns =
             NamespaceUri("http://release.niem.gov/niem/structures/5.0/".to_string());
-        let capability_ns =
-            NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/capability".to_string());
+        let capability_ns = NamespaceUri("http://example.com/schemas/capability".to_string());
 
         assert!(
             deps.contains(&structures_ns),
-            "battlefieldEntity should import structures"
+            "vehicle should import structures"
         );
         assert!(
             deps.contains(&capability_ns),
-            "battlefieldEntity should import capability"
+            "vehicle should import capability"
         );
     }
 
@@ -339,17 +333,15 @@ mod tests {
         let reg = build_test_registry();
 
         let qname = QName {
-            namespace: NamespaceUri(
-                "http://www.cto.mil/FNC3/UC2/Language/4/battlefieldEntity".to_string(),
-            ),
-            local_name: "BattlefieldEntity".to_string(),
+            namespace: NamespaceUri("http://example.com/schemas/vehicle".to_string()),
+            local_name: "Vehicle".to_string(),
         };
 
         let elem = reg
             .resolve_element(&qname)
-            .expect("BattlefieldEntity element should be resolvable");
+            .expect("Vehicle element should be resolvable");
 
-        assert_eq!(elem.name.as_deref(), Some("BattlefieldEntity"));
+        assert_eq!(elem.name.as_deref(), Some("Vehicle"));
     }
 
     #[test]
@@ -357,7 +349,7 @@ mod tests {
         let reg = build_test_registry();
 
         let qname = QName {
-            namespace: NamespaceUri("http://www.cto.mil/FNC3/UC2/Language/4/uc2-types".to_string()),
+            namespace: NamespaceUri("http://example.com/schemas/common-types".to_string()),
             local_name: "ConfidenceCodeSimpleType".to_string(),
         };
 
@@ -373,9 +365,7 @@ mod tests {
         let reg = build_test_registry();
 
         // No schema should have a None-like namespace key; aggregation schemas
-        // like uc2-sos-all.xsd should be excluded.
-        // We verify by checking that the count of schemas matches schemas with
-        // actual target namespaces.
+        // without a targetNamespace should be excluded.
         for ns in reg.schemas.keys() {
             assert!(
                 !ns.as_str().is_empty(),
@@ -389,18 +379,16 @@ mod tests {
         let reg = build_test_registry();
 
         let head = QName {
-            namespace: NamespaceUri(
-                "http://www.cto.mil/FNC3/UC2/Language/4/capability".to_string(),
-            ),
-            local_name: "CapabilityAbstract".to_string(),
+            namespace: NamespaceUri("http://example.com/schemas/capability".to_string()),
+            local_name: "FeatureAbstract".to_string(),
         };
 
         let members = reg
             .get_substitution_group(&head)
-            .expect("CapabilityAbstract should have a substitution group");
+            .expect("FeatureAbstract should have a substitution group");
 
         // All members should be in the capability namespace
-        let cap_ns = "http://www.cto.mil/FNC3/UC2/Language/4/capability";
+        let cap_ns = "http://example.com/schemas/capability";
         for member in members {
             assert_eq!(
                 member.namespace.as_str(),

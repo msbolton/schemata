@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema
+    targetNamespace="http://example.com/fleet/mission"
+    xmlns:msn="http://example.com/fleet/mission"
+    xmlns:common="http://example.com/fleet/common"
+    xmlns:veh="http://example.com/fleet/vehicle"
+    xmlns:pers="http://example.com/fleet/personnel"
+    xmlns:xs="http://www.w3.org/2001/XMLSchema"
+    elementFormDefault="qualified">
+
+  <xs:import namespace="http://example.com/fleet/common" schemaLocation="../common/types.xsd"/>
+  <xs:import namespace="http://example.com/fleet/vehicle" schemaLocation="vehicle.xsd"/>
+  <xs:import namespace="http://example.com/fleet/personnel" schemaLocation="personnel.xsd"/>
+
+  <xs:annotation>
+    <xs:documentation>
+      Mission planning and execution types. References vehicle, personnel,
+      and common types to exercise multi-namespace cross-references.
+    </xs:documentation>
+  </xs:annotation>
+
+  <!-- ===================================================================
+       Simple types
+       =================================================================== -->
+
+  <xs:simpleType name="MissionPhaseSimpleType">
+    <xs:restriction base="xs:token">
+      <xs:enumeration value="PLANNING"/>
+      <xs:enumeration value="BRIEFED"/>
+      <xs:enumeration value="IN_PROGRESS"/>
+      <xs:enumeration value="ON_HOLD"/>
+      <xs:enumeration value="COMPLETED"/>
+      <xs:enumeration value="ABORTED"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="MissionCodeType">
+    <xs:annotation>
+      <xs:documentation>
+        A mission code: two uppercase letters, a hyphen, and 4 digits.
+        Example: OP-1234.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:restriction base="xs:token">
+      <xs:pattern value="[A-Z]{2}-[0-9]{4}"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <!-- ===================================================================
+       Complex types — mission
+       =================================================================== -->
+
+  <xs:complexType name="MissionType">
+    <xs:annotation>
+      <xs:documentation>
+        A mission or operation that assigns personnel and vehicles
+        to accomplish an objective within a defined area and timeframe.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:complexContent>
+      <xs:extension base="common:IdentifiableType">
+        <xs:sequence>
+          <xs:element name="MissionCode" type="msn:MissionCodeType"/>
+          <xs:element name="Name" type="common:ShortStringType"/>
+          <xs:element name="Description" type="common:DescriptionType" minOccurs="0"/>
+          <xs:element name="Priority" type="common:PriorityLevelSimpleType"/>
+          <xs:element name="Phase" type="msn:MissionPhaseSimpleType"/>
+          <xs:element name="PlannedStartDateTime" type="xs:dateTime"/>
+          <xs:element name="PlannedEndDateTime" type="xs:dateTime" minOccurs="0"/>
+          <xs:element name="ActualStartDateTime" type="xs:dateTime" minOccurs="0"/>
+          <xs:element name="ActualEndDateTime" type="xs:dateTime" minOccurs="0"/>
+          <xs:element name="OperatingArea" type="msn:OperatingAreaType" minOccurs="0"/>
+          <xs:element name="AssignedAsset" type="msn:MissionAssetType" maxOccurs="unbounded"/>
+          <xs:element name="Waypoint" type="msn:WaypointType" minOccurs="0" maxOccurs="unbounded"/>
+          <xs:element name="Objective" type="msn:ObjectiveType" minOccurs="0" maxOccurs="unbounded"/>
+        </xs:sequence>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Complex types — operating area (xs:choice pattern)
+       =================================================================== -->
+
+  <xs:complexType name="OperatingAreaType">
+    <xs:annotation>
+      <xs:documentation>
+        Defines the geographic area for a mission, either as a bounding box,
+        a center point with radius, or a named region. Exercises xs:choice.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:choice>
+      <xs:element name="BoundingBox" type="common:BoundingBoxType"/>
+      <xs:element name="CircularArea" type="msn:CircularAreaType"/>
+      <xs:element name="NamedRegion" type="common:ShortStringType"/>
+    </xs:choice>
+  </xs:complexType>
+
+  <xs:complexType name="CircularAreaType">
+    <xs:sequence>
+      <xs:element name="Center" type="common:CoordinateType"/>
+      <xs:element name="RadiusKm" type="common:PositiveDistanceType"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Complex types — mission assets (cross-namespace references)
+       =================================================================== -->
+
+  <xs:complexType name="MissionAssetType">
+    <xs:annotation>
+      <xs:documentation>
+        A vehicle and its assigned crew for this mission.
+        Demonstrates cross-namespace element references.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="VehicleRef" type="common:UuidType"/>
+      <xs:element name="VehicleCallsign" type="common:CallsignType"/>
+      <xs:element name="CrewMember" type="msn:CrewMemberType" maxOccurs="unbounded"/>
+      <xs:element name="DepartureLocation" type="common:CoordinateType" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="CrewMemberType">
+    <xs:sequence>
+      <xs:element name="PersonRef" type="common:UuidType"/>
+      <xs:element name="Role" type="pers:AssignmentRoleSimpleType"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Complex types — waypoints and objectives
+       =================================================================== -->
+
+  <xs:complexType name="WaypointType">
+    <xs:annotation>
+      <xs:documentation>A named waypoint along a mission route.</xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="SequenceNumber" type="xs:positiveInteger"/>
+      <xs:element name="Name" type="common:ShortStringType" minOccurs="0"/>
+      <xs:element name="Location" type="common:CoordinateType"/>
+      <xs:element name="PlannedArrivalDateTime" type="xs:dateTime" minOccurs="0"/>
+      <xs:element name="HoldDuration" type="xs:duration" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="ObjectiveType">
+    <xs:annotation>
+      <xs:documentation>
+        A mission objective. The objective content is polymorphic:
+        it can be a location-based task or a general task description.
+      </xs:documentation>
+    </xs:annotation>
+    <xs:sequence>
+      <xs:element name="ObjectiveId" type="common:UuidType"/>
+      <xs:element name="Priority" type="common:PriorityLevelSimpleType"/>
+      <xs:element name="Description" type="common:DescriptionType"/>
+      <xs:choice>
+        <xs:element name="TargetLocation" type="common:CoordinateType"/>
+        <xs:element name="TargetArea" type="common:BoundingBoxType"/>
+        <xs:element name="TargetAssetRef" type="common:UuidType"/>
+      </xs:choice>
+      <xs:element name="IsComplete" type="xs:boolean" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ===================================================================
+       Top-level elements
+       =================================================================== -->
+
+  <xs:element name="Mission" type="msn:MissionType"/>
+  <xs:element name="MissionAsset" type="msn:MissionAssetType"/>
+
+</xs:schema>
