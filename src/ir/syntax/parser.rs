@@ -219,7 +219,7 @@ impl Parser {
 
     fn field(&mut self, doc: Option<String>) -> Result<Field, ParseError> {
         let name = self.expect_ident("field name")?;
-        self.expect(TokenKind::Colon, "expected `:`")?;
+        self.expect(TokenKind::Colon, "`:` after field name")?;
         let ty = self.type_ref()?;
         let cardinality = if self.eat(&TokenKind::Question) {
             Cardinality::Optional
