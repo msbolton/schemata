@@ -7,8 +7,8 @@ use anyhow::{bail, Result};
 
 use crate::convert::Warning;
 use crate::ir::model::{
-    Alias, AnnotationValue, Cardinality, Decl, EnumDecl, Field, Member, Primitive, Record, Schema,
-    TypeRef,
+    Alias, Annotation, AnnotationValue, Cardinality, Decl, EnumDecl, Field, Member, Primitive,
+    Record, Schema, TypeRef,
 };
 use crate::readers::xsd::transform::naming::{
     enum_unknown_name, enum_value_name, package_to_import_path, to_snake_case,
@@ -77,12 +77,23 @@ impl Ctx {
     }
 
     fn lower_record(&mut self, r: &Record) -> Result<ProtoMessage> {
-        // First pass: collect pinned numbers to detect duplicates and reserve them.
+        // First pass: collect pinned numbers to detect duplicates and reserve
+        // them, warning on pins that are present but unusable.
         let mut pinned: HashSet<u32> = HashSet::new();
         for f in r.members.iter().flat_map(member_fields) {
-            if let Some(n) = pinned_number(f) {
-                if !pinned.insert(n) {
-                    bail!("{}.{}: duplicate @proto.field({})", r.name, f.name, n);
+            match pinned_number(f) {
+                Some(n) => {
+                    if !pinned.insert(n) {
+                        bail!("{}.{}: duplicate @proto.field({})", r.name, f.name, n);
+                    }
+                }
+                None => {
+                    if let Some(a) = pin_annotation(f) {
+                        self.warn(format!(
+                            "{}.{}: {} is not a usable field number (must be an integer in 1..={}) — auto-assigned",
+                            r.name, f.name, a, MAX_FIELD_NUMBER
+                        ));
+                    }
                 }
             }
         }
@@ -165,26 +176,50 @@ impl Ctx {
 
     /// Resolve aliases transitively, then map to a proto type string.
     fn lower_type(&mut self, ty: &TypeRef, context: &str) -> String {
+        let current = self.current.clone();
+        let mut visited = HashSet::new();
+        self.lower_type_in(ty, context, &current, &mut visited)
+    }
+
+    /// `current` is the schema whose namespace unqualified names resolve in
+    /// (the alias's defining schema during resolution). `visited` guards
+    /// against alias cycles.
+    fn lower_type_in(
+        &mut self,
+        ty: &TypeRef,
+        context: &str,
+        current: &str,
+        visited: &mut HashSet<(String, String)>,
+    ) -> String {
         match ty {
             TypeRef::Primitive(p) => self.lower_primitive(*p, context),
             TypeRef::Named { schema, name } => {
-                let schema_name = schema.clone().unwrap_or_else(|| self.current.clone());
+                let schema_name = schema.clone().unwrap_or_else(|| current.to_string());
                 if let Some(alias) = self
                     .aliases
                     .get(&(schema_name.clone(), name.clone()))
                     .cloned()
                 {
+                    if !visited.insert((schema_name.clone(), name.clone())) {
+                        self.warn(format!(
+                            "{context}: alias cycle involving `{schema_name}.{name}` — emitted as string"
+                        ));
+                        return "string".into();
+                    }
                     for a in &alias.annotations {
                         self.warn(format!(
                             "{context}: proto cannot express @{} (from type {}) — dropped",
                             a.name, alias.name
                         ));
                     }
-                    return self.lower_type(&alias.target, context);
+                    // Recurse in the alias's defining schema, so its
+                    // unqualified target names resolve there.
+                    return self.lower_type_in(&alias.target, context, &schema_name, visited);
                 }
-                match schema {
-                    Some(s) => format!("{s}.{name}"),
-                    None => name.clone(),
+                if schema_name == self.current {
+                    name.clone()
+                } else {
+                    format!("{schema_name}.{name}")
                 }
             }
         }
@@ -253,14 +288,20 @@ fn member_fields(m: &Member) -> Vec<&Field> {
     }
 }
 
+/// Largest field number proto allows (2^29 - 1).
+const MAX_FIELD_NUMBER: i64 = 536_870_911;
+
+/// The `@proto.field(...)` annotation on a field, if any.
+fn pin_annotation(f: &Field) -> Option<&Annotation> {
+    f.annotations.iter().find(|a| a.name == "proto.field")
+}
+
+/// The pinned field number, if the pin exists and is usable.
 fn pinned_number(f: &Field) -> Option<u32> {
-    f.annotations
-        .iter()
-        .find(|a| a.name == "proto.field")
-        .and_then(|a| match a.args.first() {
-            Some(AnnotationValue::Int(n)) if *n > 0 => Some(*n as u32),
-            _ => None,
-        })
+    pin_annotation(f).and_then(|a| match a.args.first() {
+        Some(AnnotationValue::Int(n)) if (1..=MAX_FIELD_NUMBER).contains(n) => Some(*n as u32),
+        _ => None,
+    })
 }
 
 fn alloc_number(f: &Field, pinned: &HashSet<u32>, next: &mut u32) -> u32 {
@@ -442,5 +483,97 @@ mod tests {
         let (file, _) = lower(&s, &[s.clone(), other]).unwrap();
         assert_eq!(file.messages[0].fields[0].type_name, "pkg.b.Widget");
         assert_eq!(file.imports, vec!["pkg/b.proto".to_string()]);
+    }
+
+    #[test]
+    fn alias_cycle_does_not_overflow() {
+        let a = Decl::Alias(Alias {
+            name: "A".into(),
+            doc: None,
+            target: TypeRef::named(None, "B"),
+            annotations: vec![],
+        });
+        let b = Decl::Alias(Alias {
+            name: "B".into(),
+            doc: None,
+            target: TypeRef::named(None, "A"),
+            annotations: vec![],
+        });
+        let rec = Decl::Record(Record {
+            name: "R".into(),
+            doc: None,
+            annotations: vec![],
+            members: vec![Member::Field(req("x", TypeRef::named(None, "A")))],
+        });
+        let s = schema(vec![a, b, rec]);
+        let (file, warnings) = lower(&s, &[s.clone()]).unwrap();
+        assert_eq!(file.messages[0].fields[0].type_name, "string");
+        assert!(
+            warnings.iter().any(|w| w.0.contains("cycle")),
+            "warnings: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn cross_schema_alias_target_resolves_in_defining_schema() {
+        // pkg.b: `type W = LocalThing` where LocalThing is a record in pkg.b.
+        let other = Schema {
+            name: "pkg.b".into(),
+            annotations: vec![],
+            imports: vec![],
+            decls: vec![
+                Decl::Alias(Alias {
+                    name: "W".into(),
+                    doc: None,
+                    target: TypeRef::named(None, "LocalThing"),
+                    annotations: vec![],
+                }),
+                Decl::Record(Record {
+                    name: "LocalThing".into(),
+                    doc: None,
+                    annotations: vec![],
+                    members: vec![],
+                }),
+            ],
+            source_path: None,
+        };
+        let mut s = schema(vec![Decl::Record(Record {
+            name: "R".into(),
+            doc: None,
+            annotations: vec![],
+            members: vec![Member::Field(req("w", TypeRef::named(Some("pkg.b"), "W")))],
+        })]);
+        s.imports = vec!["pkg.b".into()];
+        let (file, _) = lower(&s, &[s.clone(), other]).unwrap();
+        assert_eq!(file.messages[0].fields[0].type_name, "pkg.b.LocalThing");
+    }
+
+    #[test]
+    fn unusable_pin_warns_and_auto_assigns() {
+        let mut f1 = req("a", TypeRef::Primitive(Primitive::String));
+        f1.annotations.push(Annotation::new(
+            "proto.field",
+            vec![AnnotationValue::Int(0)],
+        ));
+        let mut f2 = req("b", TypeRef::Primitive(Primitive::String));
+        f2.annotations
+            .push(Annotation::str("proto.field", "not-a-number"));
+        let s = schema(vec![Decl::Record(Record {
+            name: "R".into(),
+            doc: None,
+            annotations: vec![],
+            members: vec![Member::Field(f1), Member::Field(f2)],
+        })]);
+        let (file, warnings) = lower(&s, &[s.clone()]).unwrap();
+        assert_eq!(file.messages[0].fields[0].number, 1);
+        assert_eq!(file.messages[0].fields[1].number, 2);
+        assert_eq!(
+            warnings
+                .iter()
+                .filter(|w| w.0.contains("proto.field"))
+                .count(),
+            2,
+            "warnings: {warnings:?}"
+        );
     }
 }
