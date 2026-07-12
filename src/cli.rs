@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use crate::transform::profile::SchemaProfile;
+use crate::readers::xsd::transform::profile::SchemaProfile;
 
 /// schemata - XSD to Protocol Buffers converter for NIEM-based schemas
 #[derive(Debug, Parser)]

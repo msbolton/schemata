@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::Parser;
 use schemata::cli::{Cli, Command};
-use schemata::proto::emitter::emit_proto_file;
-use schemata::resolver::build_type_registry;
-use schemata::transform::naming::package_to_import_path;
-use schemata::transform::profile::SchemaProfile;
-use schemata::transform::transform_schema;
-use schemata::xsd::parser::parse_schema;
+use schemata::readers::xsd::parser::parse_schema;
+use schemata::readers::xsd::resolver::build_type_registry;
+use schemata::readers::xsd::transform::naming::package_to_import_path;
+use schemata::readers::xsd::transform::profile::SchemaProfile;
+use schemata::readers::xsd::transform::transform_schema;
+use schemata::writers::proto::emitter::emit_proto_file;
 use tracing_subscriber::EnvFilter;
 
 fn main() -> Result<()> {

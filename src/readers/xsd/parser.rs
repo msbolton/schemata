@@ -10,8 +10,8 @@ use anyhow::{bail, Context, Result};
 use roxmltree::{Document, Node};
 use tracing::warn;
 
-use crate::xsd::model::*;
-use crate::xsd::names::{NamespaceMap, XS_NAMESPACE};
+use crate::readers::xsd::model::*;
+use crate::readers::xsd::names::{NamespaceMap, XS_NAMESPACE};
 
 // ---------------------------------------------------------------------------
 // Public entry point

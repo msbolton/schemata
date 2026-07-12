@@ -11,10 +11,10 @@ use self::profile::SchemaProfile;
 
 use std::collections::BTreeSet;
 
-use crate::proto::model::*;
-use crate::resolver::TypeRegistry;
-use crate::xsd::model::*;
-use crate::xsd::names::{STRUCTURES_NAMESPACE, XS_NAMESPACE};
+use crate::readers::xsd::model::*;
+use crate::readers::xsd::names::{STRUCTURES_NAMESPACE, XS_NAMESPACE};
+use crate::readers::xsd::resolver::TypeRegistry;
+use crate::writers::proto::model::*;
 
 use self::naming::*;
 
@@ -986,8 +986,8 @@ fn niem_xs_to_proto(local_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::readers::xsd::transform::profile::SchemaProfile;
     use crate::test_fixtures::build_test_registry;
-    use crate::transform::profile::SchemaProfile;
 
     // -- Integration: transform a namespace ---------------------------------
 
@@ -1333,9 +1333,9 @@ mod tests {
     // These use small, self-contained inline XSD fixtures with synthetic
     // namespaces so they are independent of any real-world schema set.
 
-    use crate::resolver::build_type_registry as build_reg;
+    use crate::readers::xsd::parser::parse_schema;
+    use crate::readers::xsd::resolver::build_type_registry as build_reg;
     use crate::test_fixtures::{NIEM_XS_XSD, STRUCTURES_XSD};
-    use crate::xsd::parser::parse_schema;
     use std::path::{Path, PathBuf};
 
     /// Build a minimal registry from inline XSD strings.

@@ -1,6 +1,6 @@
 //! Schema profile selection for NIEM vs generic XSD transforms.
 
-use crate::xsd::model::QName;
+use crate::readers::xsd::model::QName;
 
 /// Controls which NIEM-specific transformations are applied.
 ///
