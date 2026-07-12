@@ -6,7 +6,9 @@ use std::process::Command;
 fn collect(dir: &Path, ext: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     fn walk(root: &Path, dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
-        for entry in fs::read_dir(dir).unwrap().flatten() {
+        let entries =
+            fs::read_dir(dir).unwrap_or_else(|e| panic!("reading dir {}: {e}", dir.display()));
+        for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
                 walk(root, &p, ext, out);
@@ -40,22 +42,36 @@ fn assert_dirs_equal(expected_dir: &Path, actual_dir: &Path, ext: &str) {
     }
 }
 
+/// Removes the wrapped directory on drop, even if the test panics.
+struct TempDirGuard(PathBuf);
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.0).ok();
+    }
+}
+
+fn tempdir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("schemata-golden-{}-{name}", std::process::id()));
+    fs::remove_dir_all(&dir).ok();
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
 #[test]
 fn xsd_to_proto_matches_golden() {
-    let out = tempdir();
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let input = manifest_dir.join("schemas");
+    let golden = manifest_dir.join("tests/golden/proto");
+
+    let out = tempdir("xsd_to_proto");
+    let _guard = TempDirGuard(out.clone());
     run_convert(&[
         "convert",
         "--input",
-        "schemas",
+        input.to_str().unwrap(),
         "--output",
         out.to_str().unwrap(),
     ]);
-    assert_dirs_equal(Path::new("tests/golden/proto"), &out, "proto");
-    fs::remove_dir_all(&out).ok();
-}
-
-fn tempdir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("schemata-golden-{}", std::process::id()));
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    assert_dirs_equal(&golden, &out, "proto");
 }
