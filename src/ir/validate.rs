@@ -71,11 +71,21 @@ fn check_ref(
     errors: &mut Vec<String>,
 ) {
     if let TypeRef::Named { schema, name } = ty {
+        // Synthetic non-identifier names (e.g. the XSD reader's
+        // `map<string, string>` shim) are not declarations; skip them.
+        if name.contains('<') {
+            return;
+        }
         let target_schema = schema.as_deref().unwrap_or(current.name.as_str());
-        let resolved = index
-            .get(target_schema)
-            .is_some_and(|names| names.contains(name.as_str()));
-        if !resolved {
+        // Qualified refs into schemas outside the provided set are treated as
+        // external (e.g. google.protobuf well-known types) and not validated.
+        let Some(names) = index.get(target_schema) else {
+            if schema.is_none() {
+                errors.push(format!("{context}: unresolved type reference `{ty}`"));
+            }
+            return;
+        };
+        if !names.contains(name.as_str()) {
             errors.push(format!("{context}: unresolved type reference `{ty}`"));
         }
     }
@@ -144,6 +154,33 @@ mod tests {
             vec![field("home", TypeRef::named(Some("common"), "Address"))],
         )]);
         assert!(validate(&[common, s]).is_empty());
+    }
+
+    #[test]
+    fn ref_to_external_schema_is_not_validated() {
+        // Well-known external types (e.g. google.protobuf.Timestamp) live in
+        // schemas outside the provided set and must not be flagged.
+        let s = schema_with(vec![record(
+            "Event",
+            vec![field(
+                "when",
+                TypeRef::named(Some("google.protobuf"), "Timestamp"),
+            )],
+        )]);
+        assert!(validate(&[s]).is_empty());
+    }
+
+    #[test]
+    fn qualified_ref_to_known_schema_missing_decl_is_reported() {
+        let mut common = schema_with(vec![record("Address", vec![])]);
+        common.name = "common".into();
+        let s = schema_with(vec![record(
+            "Person",
+            vec![field("home", TypeRef::named(Some("common"), "Missing"))],
+        )]);
+        let errs = validate(&[common, s]);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("Missing"), "got: {}", errs[0]);
     }
 
     #[test]

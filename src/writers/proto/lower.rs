@@ -216,7 +216,10 @@ impl Ctx {
                     // unqualified target names resolve there.
                     return self.lower_type_in(&alias.target, context, &schema_name, visited);
                 }
-                if schema_name == self.current {
+                // Explicitly qualified refs stay qualified (even within the
+                // current schema); only unqualified refs that resolve in the
+                // emitting schema are emitted bare.
+                if schema.is_none() && schema_name == self.current {
                     name.clone()
                 } else {
                     format!("{schema_name}.{name}")
@@ -252,24 +255,36 @@ impl Ctx {
     }
 
     fn lower_enum(&mut self, e: &EnumDecl) -> ProtoEnum {
-        let mut values = vec![ProtoEnumValue {
-            name: enum_unknown_name(&e.name),
-            number: 0,
-            documentation: None,
-        }];
-        for (i, v) in e.values.iter().enumerate() {
-            let source = v
-                .annotations
-                .iter()
-                .find(|a| a.name == "xml.value")
-                .and_then(|a| match a.args.first() {
-                    Some(AnnotationValue::Str(s)) => Some(s.as_str()),
-                    _ => None,
-                })
-                .unwrap_or(&v.name);
+        let sources: Vec<&str> = e.values.iter().map(enum_value_source).collect();
+
+        // If the source enum already carries an "unknown" value it becomes
+        // the zero value; otherwise synthesize one.
+        let unknown_idx = sources
+            .iter()
+            .position(|s| s.eq_ignore_ascii_case("unknown"));
+
+        let mut values = Vec::new();
+        if unknown_idx.is_none() {
             values.push(ProtoEnumValue {
-                name: enum_value_name(&e.name, source),
-                number: (i + 1) as i32,
+                name: enum_unknown_name(&e.name),
+                number: 0,
+                documentation: Some("Unspecified/unknown value.".to_string()),
+            });
+        }
+        for (i, v) in e.values.iter().enumerate() {
+            let number = if sources[i].eq_ignore_ascii_case("unknown") {
+                0
+            } else {
+                match unknown_idx {
+                    // Values after the source's own unknown shift down to
+                    // keep the numbering dense from 0.
+                    Some(u) if i > u => i as i32,
+                    _ => (i + 1) as i32,
+                }
+            };
+            values.push(ProtoEnumValue {
+                name: enum_value_name(&e.name, sources[i]),
+                number,
                 documentation: v.doc.clone(),
             });
         }
@@ -279,6 +294,19 @@ impl Ctx {
             documentation: e.doc.clone(),
         }
     }
+}
+
+/// The source enumeration string for an IR enum value: the raw XSD value
+/// preserved in `@xml.value(...)`, falling back to the value name.
+fn enum_value_source(v: &crate::ir::model::EnumValue) -> &str {
+    v.annotations
+        .iter()
+        .find(|a| a.name == "xml.value")
+        .and_then(|a| match a.args.first() {
+            Some(AnnotationValue::Str(s)) => Some(s.as_str()),
+            _ => None,
+        })
+        .unwrap_or(&v.name)
 }
 
 fn member_fields(m: &Member) -> Vec<&Field> {
@@ -454,6 +482,104 @@ mod tests {
         assert_eq!(file.enums[0].values[0].number, 0);
         assert!(file.enums[0].values[0].name.ends_with("UNKNOWN"));
         assert_eq!(file.enums[0].values[1].name, "STATUS_ACTIVE");
+    }
+
+    #[test]
+    fn existing_unknown_value_becomes_zero_without_synthetic() {
+        let s = schema(vec![Decl::Enum(EnumDecl {
+            name: "Status".into(),
+            doc: None,
+            annotations: vec![],
+            values: vec![
+                EnumValue {
+                    name: "ACTIVE".into(),
+                    doc: None,
+                    annotations: vec![],
+                },
+                EnumValue {
+                    name: "UNKNOWN".into(),
+                    doc: None,
+                    annotations: vec![],
+                },
+                EnumValue {
+                    name: "CLOSED".into(),
+                    doc: None,
+                    annotations: vec![],
+                },
+            ],
+        })]);
+        let (file, _) = lower(&s, &[s.clone()]).unwrap();
+        let names_numbers: Vec<(&str, i32)> = file.enums[0]
+            .values
+            .iter()
+            .map(|v| (v.name.as_str(), v.number))
+            .collect();
+        assert_eq!(
+            names_numbers,
+            vec![
+                ("STATUS_ACTIVE", 1),
+                ("STATUS_UNKNOWN", 0),
+                ("STATUS_CLOSED", 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn synthetic_unknown_carries_documentation() {
+        let s = schema(vec![Decl::Enum(EnumDecl {
+            name: "Status".into(),
+            doc: None,
+            annotations: vec![],
+            values: vec![EnumValue {
+                name: "ACTIVE".into(),
+                doc: None,
+                annotations: vec![],
+            }],
+        })]);
+        let (file, _) = lower(&s, &[s.clone()]).unwrap();
+        assert_eq!(
+            file.enums[0].values[0].documentation.as_deref(),
+            Some("Unspecified/unknown value.")
+        );
+    }
+
+    #[test]
+    fn xml_value_annotation_drives_enum_constant_name() {
+        let s = schema(vec![Decl::Enum(EnumDecl {
+            name: "Caliber".into(),
+            doc: None,
+            annotations: vec![],
+            values: vec![EnumValue {
+                name: "_5_56_mm".into(),
+                doc: None,
+                annotations: vec![Annotation::str("xml.value", "5.56 mm")],
+            }],
+        })]);
+        let (file, _) = lower(&s, &[s.clone()]).unwrap();
+        assert_eq!(file.enums[0].values[1].name, "CALIBER__5_56_MM");
+    }
+
+    #[test]
+    fn explicitly_qualified_same_schema_ref_stays_qualified() {
+        let s = schema(vec![
+            Decl::Record(Record {
+                name: "R".into(),
+                doc: None,
+                annotations: vec![],
+                members: vec![Member::Field(req(
+                    "w",
+                    TypeRef::named(Some("pkg.a"), "Widget"),
+                ))],
+            }),
+            Decl::Record(Record {
+                name: "Widget".into(),
+                doc: None,
+                annotations: vec![],
+                members: vec![],
+            }),
+        ]);
+        let (file, _) = lower(&s, &[s.clone()]).unwrap();
+        assert_eq!(file.messages[0].fields[0].type_name, "pkg.a.Widget");
     }
 
     #[test]

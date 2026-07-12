@@ -1,8 +1,8 @@
-//! Transform layer that converts XSD IR to Proto IR.
+//! Transform layer that converts parsed XSD into the schemata IR.
 //!
 //! The main entry point is [`transform_schema`], which takes a namespace URI
-//! and a [`TypeRegistry`] and produces a [`ProtoFile`] representing a single
-//! `.proto` file for that namespace.
+//! and a [`TypeRegistry`] and produces one [`Schema`] (the IR root) for that
+//! namespace. Writers (e.g. the proto lowering) consume the IR from here.
 
 pub mod naming;
 pub mod profile;
@@ -11,10 +11,13 @@ use self::profile::SchemaProfile;
 
 use std::collections::BTreeSet;
 
+use crate::ir::model::{
+    Annotation, Cardinality, Choice, Decl, EnumDecl, EnumValue, Field, Member, Primitive, Record,
+    Schema, TypeRef,
+};
 use crate::readers::xsd::model::*;
 use crate::readers::xsd::names::{STRUCTURES_NAMESPACE, XS_NAMESPACE};
 use crate::readers::xsd::resolver::TypeRegistry;
-use crate::writers::proto::model::*;
 
 use self::naming::*;
 
@@ -25,14 +28,14 @@ const NIEM_XS_NAMESPACE: &str = "http://release.niem.gov/niem/proxy/niem-xs/5.0/
 // Public entry point
 // ---------------------------------------------------------------------------
 
-/// Transform a single namespace from the XSD registry into a [`ProtoFile`].
+/// Transform a single namespace from the XSD registry into an IR [`Schema`].
 ///
 /// Returns `None` if the namespace has no schema in the registry.
 pub fn transform_schema(
     ns: &NamespaceUri,
     registry: &TypeRegistry,
     profile: SchemaProfile,
-) -> Option<ProtoFile> {
+) -> Option<Schema> {
     let schema = registry.schemas.get(ns)?;
     let package = namespace_to_package(ns.as_str());
 
@@ -44,13 +47,12 @@ pub fn transform_schema(
         profile,
     };
 
-    let mut messages = Vec::new();
-    let mut enums = Vec::new();
+    let mut decls = Vec::new();
 
     // Transform simple types (enums, patterns, etc.).
     for st in &schema.simple_types {
-        if let Some(proto_enum) = ctx.transform_simple_type(st) {
-            enums.push(proto_enum);
+        if let Some(enum_decl) = ctx.transform_simple_type(st) {
+            decls.push(Decl::Enum(enum_decl));
         }
     }
 
@@ -70,26 +72,98 @@ pub fn transform_schema(
                 continue;
             }
 
-            if let Some(msg) = ctx.transform_complex_type(ct, name) {
-                messages.push(msg);
+            if let Some(record) = ctx.transform_complex_type(ct, name) {
+                decls.push(Decl::Record(record));
             }
         }
     }
 
-    // Build import list.
+    // Imports are package names of other IR schemas (deduplicated, sorted).
     let imports: Vec<String> = ctx.imports.into_iter().collect();
 
-    let source_xsd_path = registry.source_paths.get(ns).cloned();
+    let source_path = registry.source_paths.get(ns).cloned();
 
-    Some(ProtoFile {
-        syntax: "proto3".to_string(),
-        package,
+    Some(Schema {
+        name: package,
+        annotations: vec![Annotation::str("xml.namespace", ns.as_str())],
         imports,
-        options: Vec::new(),
-        messages,
-        enums,
-        source_xsd_path,
+        decls,
+        source_path,
     })
+}
+
+/// Convert the transform's internal proto-style type string into an IR TypeRef.
+fn type_ref_from_type_string(s: &str) -> TypeRef {
+    match s {
+        "double" => return TypeRef::Primitive(Primitive::Float64),
+        "float" => return TypeRef::Primitive(Primitive::Float32),
+        _ => {}
+    }
+    if let Some(p) = Primitive::from_name(s) {
+        return TypeRef::Primitive(p);
+    }
+    match s.rsplit_once('.') {
+        Some((pkg, name)) => TypeRef::named(Some(pkg), name),
+        None => TypeRef::named(None, s),
+    }
+}
+
+/// True if `s` is a valid identifier: `[A-Za-z_][A-Za-z0-9_]*`.
+fn is_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Sanitize a raw string into an identifier: non-alphanumeric characters
+/// become `_`, and a leading digit gets a `_` prefix.
+fn sanitize_identifier(s: &str) -> String {
+    let mut out: String = s
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    if out.starts_with(|c: char| c.is_ascii_digit()) {
+        out.insert(0, '_');
+    }
+    out
+}
+
+/// Build an IR enum value from a raw XSD enumeration value.
+///
+/// The raw value is preserved exactly: as the value name when it is a valid
+/// identifier, otherwise in an `@xml.value("...")` annotation next to a
+/// sanitized name. Lowerings that need the original (e.g. proto enum constant
+/// naming) read the annotation first, falling back to the name.
+fn enum_value_from_raw(raw: &str, doc: Option<String>) -> EnumValue {
+    if is_identifier(raw) {
+        EnumValue {
+            name: raw.to_string(),
+            doc,
+            annotations: vec![],
+        }
+    } else {
+        EnumValue {
+            name: sanitize_identifier(raw),
+            doc,
+            annotations: vec![Annotation::str("xml.value", raw)],
+        }
+    }
+}
+
+/// Count fields declared so far (both direct fields and choice fields).
+/// Mirrors the sequential field numbering of the proto lowering, so
+/// synthetic placeholder names stay stable.
+fn count_fields(members: &[Member]) -> usize {
+    members
+        .iter()
+        .map(|m| match m {
+            Member::Field(_) => 1,
+            Member::Choice(c) => c.fields.len(),
+        })
+        .sum()
 }
 
 // ---------------------------------------------------------------------------
@@ -101,19 +175,20 @@ struct TransformContext<'a> {
     registry: &'a TypeRegistry,
     current_ns: NamespaceUri,
     current_package: String,
+    /// Package names of other schemas referenced by qualified type refs.
     imports: BTreeSet<String>,
     profile: SchemaProfile,
 }
 
 impl<'a> TransformContext<'a> {
     // -----------------------------------------------------------------------
-    // Simple type -> Proto enum
+    // Simple type -> IR enum
     // -----------------------------------------------------------------------
 
-    /// Transform a simple type into a proto enum if it has enumeration variants.
+    /// Transform a simple type into an IR enum if it has enumeration variants.
     /// For pattern-only or other restriction types, returns None (they map
     /// to their base primitive type at usage sites).
-    fn transform_simple_type(&self, st: &XsdSimpleType) -> Option<ProtoEnum> {
+    fn transform_simple_type(&self, st: &XsdSimpleType) -> Option<EnumDecl> {
         match &st.content {
             SimpleTypeContent::Enumeration { variants, .. } => {
                 Some(self.build_enum(&st.name, variants, st.annotation.documentation.as_deref()))
@@ -122,122 +197,69 @@ impl<'a> TransformContext<'a> {
         }
     }
 
-    /// Build a ProtoEnum from enumeration variants.
+    /// Build an IR enum from enumeration variants.
+    ///
+    /// Values carry the raw XSD enumeration strings (no UNKNOWN injection,
+    /// no numbering — writers add those).
     fn build_enum(
         &self,
         name: &str,
         variants: &[EnumVariant],
         documentation: Option<&str>,
-    ) -> ProtoEnum {
-        let mut values = Vec::new();
-
-        // Check if there's already an UNKNOWN variant.
-        let has_unknown = variants
+    ) -> EnumDecl {
+        let values = variants
             .iter()
-            .any(|v| v.value.eq_ignore_ascii_case("unknown"));
+            .map(|v| enum_value_from_raw(&v.value, v.annotation.documentation.clone()))
+            .collect();
 
-        if !has_unknown {
-            // Insert a synthetic UNKNOWN = 0 value.
-            values.push(ProtoEnumValue {
-                name: enum_unknown_name(name),
-                number: 0,
-                documentation: Some("Unspecified/unknown value.".to_string()),
-            });
-        }
-
-        for (i, variant) in variants.iter().enumerate() {
-            let number = if has_unknown && variant.value.eq_ignore_ascii_case("unknown") {
-                0 // UNKNOWN gets number 0
-            } else if has_unknown {
-                // If UNKNOWN is in the original list, offset numbering to skip 0
-                // for non-UNKNOWN values.
-                let unknown_idx = variants
-                    .iter()
-                    .position(|v| v.value.eq_ignore_ascii_case("unknown"))
-                    .unwrap();
-                if i < unknown_idx {
-                    (i + 1) as i32
-                } else {
-                    i as i32
-                }
-            } else {
-                // UNKNOWN was synthetically added at 0, so real values start at 1.
-                (i + 1) as i32
-            };
-
-            values.push(ProtoEnumValue {
-                name: enum_value_name(name, &variant.value),
-                number,
-                documentation: variant.annotation.documentation.clone(),
-            });
-        }
-
-        ProtoEnum {
+        EnumDecl {
             name: name.to_string(),
+            doc: documentation.map(|s| s.to_string()),
+            annotations: vec![],
             values,
-            documentation: documentation.map(|s| s.to_string()),
         }
     }
 
     // -----------------------------------------------------------------------
-    // Complex type -> Proto message
+    // Complex type -> IR record
     // -----------------------------------------------------------------------
 
-    /// Transform a complex type into a proto message.
-    fn transform_complex_type(&mut self, ct: &XsdComplexType, name: &str) -> Option<ProtoMessage> {
-        let mut fields = Vec::new();
-        let mut oneofs = Vec::new();
-        let mut field_number = 1u32;
+    /// Transform a complex type into an IR record.
+    fn transform_complex_type(&mut self, ct: &XsdComplexType, name: &str) -> Option<Record> {
+        let mut members = Vec::new();
 
         match &ct.content {
-            // Rule 1: complexContent/extension
-            ComplexTypeContent::ComplexExtension { base, compositor } => {
-                self.handle_extension_base(base, &mut fields, &mut oneofs, &mut field_number);
+            // Rule 1: complexContent/extension.
+            // complexContent/restriction is treated the same way but with the
+            // restricted content.
+            ComplexTypeContent::ComplexExtension { base, compositor }
+            | ComplexTypeContent::ComplexRestriction { base, compositor } => {
+                self.handle_extension_base(base, &mut members);
 
                 if let Some(comp) = compositor {
-                    self.flatten_compositor(comp, &mut fields, &mut oneofs, &mut field_number);
-                }
-            }
-
-            // complexContent/restriction - treat similarly but with the restricted content.
-            ComplexTypeContent::ComplexRestriction { base, compositor } => {
-                self.handle_extension_base(base, &mut fields, &mut oneofs, &mut field_number);
-                if let Some(comp) = compositor {
-                    self.flatten_compositor(comp, &mut fields, &mut oneofs, &mut field_number);
+                    self.flatten_compositor(comp, &mut members);
                 }
             }
 
             // simpleContent/extension - this should have been caught as a wrapper,
             // but if it wasn't (e.g., has custom attributes beyond SimpleObjectAttributeGroup),
-            // emit a message with a `value` field.
-            ComplexTypeContent::SimpleExtension { base } => {
-                let type_name = self.resolve_type_name(base);
-                fields.push(ProtoField {
+            // emit a record with a `value` field.
+            ComplexTypeContent::SimpleExtension { base }
+            | ComplexTypeContent::SimpleRestriction { base } => {
+                let ty = self.resolve_type_ref(base);
+                members.push(Member::Field(Field {
                     name: "value".to_string(),
-                    number: field_number,
-                    type_name,
-                    cardinality: FieldCardinality::Singular,
-                    documentation: None,
-                });
-                field_number += 1;
-            }
-
-            ComplexTypeContent::SimpleRestriction { base } => {
-                let type_name = self.resolve_type_name(base);
-                fields.push(ProtoField {
-                    name: "value".to_string(),
-                    number: field_number,
-                    type_name,
-                    cardinality: FieldCardinality::Singular,
-                    documentation: None,
-                });
-                field_number += 1;
+                    ty,
+                    cardinality: Cardinality::Required,
+                    doc: None,
+                    annotations: vec![],
+                }));
             }
 
             // Direct content (sequence/choice/all).
             ComplexTypeContent::Direct { compositor } => {
                 if let Some(comp) = compositor {
-                    self.flatten_compositor(comp, &mut fields, &mut oneofs, &mut field_number);
+                    self.flatten_compositor(comp, &mut members);
                 }
             }
 
@@ -245,32 +267,24 @@ impl<'a> TransformContext<'a> {
         }
 
         // Rule 11: attributes
-        self.handle_attributes(
-            &ct.attributes,
-            &ct.attribute_group_refs,
-            &mut fields,
-            &mut field_number,
-        );
+        self.handle_attributes(&ct.attributes, &ct.attribute_group_refs, &mut members);
 
         // Rule 13: anyAttribute -> map<string, string>
         if ct.any_attribute.is_some() {
-            fields.push(ProtoField {
+            members.push(Member::Field(Field {
                 name: "extra_attributes".to_string(),
-                number: field_number,
-                type_name: "map<string, string>".to_string(),
-                cardinality: FieldCardinality::Singular,
-                documentation: Some("Catch-all for ISM/NTK attributes.".to_string()),
-            });
-            // field_number += 1; // not needed as last field
+                ty: TypeRef::named(None, "map<string, string>"),
+                cardinality: Cardinality::Required,
+                doc: Some("Catch-all for ISM/NTK attributes.".to_string()),
+                annotations: vec![],
+            }));
         }
 
-        Some(ProtoMessage {
+        Some(Record {
             name: name.to_string(),
-            fields,
-            oneofs,
-            nested_messages: Vec::new(),
-            nested_enums: Vec::new(),
-            documentation: ct.annotation.documentation.clone(),
+            doc: ct.annotation.documentation.clone(),
+            annotations: vec![],
+            members,
         })
     }
 
@@ -285,18 +299,12 @@ impl<'a> TransformContext<'a> {
     /// rather than emitting a base field.
     ///
     /// For other base types, we emit a composition field.
-    fn handle_extension_base(
-        &mut self,
-        base: &QName,
-        fields: &mut Vec<ProtoField>,
-        oneofs: &mut Vec<ProtoOneof>,
-        field_number: &mut u32,
-    ) {
+    fn handle_extension_base(&mut self, base: &QName, members: &mut Vec<Member>) {
         if self.profile.should_inline_structures_base()
             && base.namespace.as_str() == STRUCTURES_NAMESPACE
         {
             // Inline the structures attributes.
-            self.emit_structures_attributes(fields, field_number);
+            self.emit_structures_attributes(members);
 
             // Check for ObjectAugmentationPoint or AssociationAugmentationPoint.
             let aug_point_name = match base.local_name.as_str() {
@@ -310,55 +318,50 @@ impl<'a> TransformContext<'a> {
                     namespace: NamespaceUri(STRUCTURES_NAMESPACE.to_string()),
                     local_name: aug_name.to_string(),
                 };
-                // Only emit a oneof if there are known augmentations.
+                // Only emit a choice if there are known augmentations.
                 if let Some(augmentations) = self.registry.get_augmentations(&aug_qname) {
                     if !augmentations.is_empty() {
-                        let oneof = self.build_augmentation_oneof(
-                            &to_snake_case(aug_name),
-                            augmentations,
-                            field_number,
-                        );
-                        oneofs.push(oneof);
+                        let choice =
+                            self.build_augmentation_choice(&to_snake_case(aug_name), augmentations);
+                        members.push(Member::Choice(choice));
                     }
                 }
             }
         } else {
             // Non-structures base: emit a composition field.
-            let type_name = self.resolve_type_name(base);
+            let ty = self.resolve_type_ref(base);
             let field_name = to_snake_case(
                 base.local_name
                     .strip_suffix("Type")
                     .unwrap_or(&base.local_name),
             );
-            fields.push(ProtoField {
+            members.push(Member::Field(Field {
                 name: field_name,
-                number: *field_number,
-                type_name,
-                cardinality: FieldCardinality::Singular,
-                documentation: Some(format!("Base type: {}", base.local_name)),
-            });
-            *field_number += 1;
+                ty,
+                cardinality: Cardinality::Required,
+                doc: Some(format!("Base type: {}", base.local_name)),
+                annotations: vec![],
+            }));
         }
     }
 
     /// Emit the standard NIEM structures attributes as fields.
-    fn emit_structures_attributes(&self, fields: &mut Vec<ProtoField>, field_number: &mut u32) {
+    fn emit_structures_attributes(&self, members: &mut Vec<Member>) {
         let attrs = [
-            ("structures_id", "string", "A document-relative identifier."),
-            ("structures_ref", "string", "A document-relative reference."),
-            ("structures_uri", "string", "A URI for this object."),
-            ("structures_metadata", "string", "Metadata references."),
+            ("structures_id", "A document-relative identifier."),
+            ("structures_ref", "A document-relative reference."),
+            ("structures_uri", "A URI for this object."),
+            ("structures_metadata", "Metadata references."),
         ];
 
-        for (name, type_name, doc) in &attrs {
-            fields.push(ProtoField {
+        for (name, doc) in &attrs {
+            members.push(Member::Field(Field {
                 name: name.to_string(),
-                number: *field_number,
-                type_name: type_name.to_string(),
-                cardinality: FieldCardinality::Optional,
-                documentation: Some(doc.to_string()),
-            });
-            *field_number += 1;
+                ty: TypeRef::Primitive(Primitive::String),
+                cardinality: Cardinality::Optional,
+                doc: Some(doc.to_string()),
+                annotations: vec![],
+            }));
         }
     }
 
@@ -366,19 +369,14 @@ impl<'a> TransformContext<'a> {
     // Compositor flattening
     // -----------------------------------------------------------------------
 
-    /// Flatten a compositor (sequence/choice/all) into fields and oneofs.
-    fn flatten_compositor(
-        &mut self,
-        comp: &Compositor,
-        fields: &mut Vec<ProtoField>,
-        oneofs: &mut Vec<ProtoOneof>,
-        field_number: &mut u32,
-    ) {
+    /// Flatten a compositor (sequence/choice/all) into record members.
+    fn flatten_compositor(&mut self, comp: &Compositor, members: &mut Vec<Member>) {
         match comp.kind {
-            // Rule 7: xs:choice -> oneof
+            // Rule 7: xs:choice -> choice member
             CompositorKind::Choice => {
-                let oneof = self.build_choice_oneof(comp, field_number);
-                oneofs.push(oneof);
+                let fields_before = count_fields(members);
+                let choice = self.build_choice(comp, fields_before);
+                members.push(Member::Choice(choice));
             }
 
             // Rule 8: xs:sequence -> ordered fields
@@ -386,16 +384,12 @@ impl<'a> TransformContext<'a> {
                 for item in &comp.items {
                     match item {
                         CompositorItem::Element(elem) => {
-                            if let Some(field_or_oneof) = self.transform_element(elem, field_number)
-                            {
-                                match field_or_oneof {
-                                    FieldOrOneof::Field(f) => fields.push(f),
-                                    FieldOrOneof::Oneof(o) => oneofs.push(o),
-                                }
+                            if let Some(member) = self.transform_element(elem) {
+                                members.push(member);
                             }
                         }
                         CompositorItem::Compositor(nested) => {
-                            self.flatten_compositor(nested, fields, oneofs, field_number);
+                            self.flatten_compositor(nested, members);
                         }
                     }
                 }
@@ -403,9 +397,12 @@ impl<'a> TransformContext<'a> {
         }
     }
 
-    /// Build a oneof from a choice compositor.
-    fn build_choice_oneof(&mut self, comp: &Compositor, field_number: &mut u32) -> ProtoOneof {
-        let mut oneof_fields = Vec::new();
+    /// Build a choice member from a choice compositor.
+    ///
+    /// `fields_before` is the number of fields already declared in the record,
+    /// used only to name placeholder fields for nested compositors.
+    fn build_choice(&mut self, comp: &Compositor, fields_before: usize) -> Choice {
+        let mut choice_fields = Vec::new();
 
         // Try to derive a meaningful name from the choice items.
         let choice_name = derive_choice_name(&comp.items);
@@ -413,33 +410,32 @@ impl<'a> TransformContext<'a> {
         for item in &comp.items {
             match item {
                 CompositorItem::Element(elem) => {
-                    let (name, type_name) = self.element_name_and_type(elem);
-                    oneof_fields.push(ProtoField {
+                    let (name, ty) = self.element_name_and_type(elem);
+                    choice_fields.push(Field {
                         name,
-                        number: *field_number,
-                        type_name,
-                        cardinality: FieldCardinality::Singular,
-                        documentation: elem.annotation.documentation.clone(),
+                        ty,
+                        cardinality: Cardinality::Required,
+                        doc: elem.annotation.documentation.clone(),
+                        annotations: vec![],
                     });
-                    *field_number += 1;
                 }
                 CompositorItem::Compositor(_nested) => {
                     // Nested compositor inside choice - rare, emit a placeholder.
-                    oneof_fields.push(ProtoField {
-                        name: format!("choice_option_{}", field_number),
-                        number: *field_number,
-                        type_name: "string".to_string(),
-                        cardinality: FieldCardinality::Singular,
-                        documentation: Some("Nested compositor in choice.".to_string()),
+                    choice_fields.push(Field {
+                        name: format!("choice_option_{}", fields_before + choice_fields.len() + 1),
+                        ty: TypeRef::Primitive(Primitive::String),
+                        cardinality: Cardinality::Required,
+                        doc: Some("Nested compositor in choice.".to_string()),
+                        annotations: vec![],
                     });
-                    *field_number += 1;
                 }
             }
         }
 
-        ProtoOneof {
+        Choice {
             name: choice_name,
-            fields: oneof_fields,
+            doc: None,
+            fields: choice_fields,
         }
     }
 
@@ -448,12 +444,8 @@ impl<'a> TransformContext<'a> {
     // -----------------------------------------------------------------------
 
     /// Transform a single element (either a reference or a declaration) into
-    /// a field or a oneof (for substitution groups / augmentation points).
-    fn transform_element(
-        &mut self,
-        elem: &XsdElement,
-        field_number: &mut u32,
-    ) -> Option<FieldOrOneof> {
+    /// a field or a choice (for substitution groups / augmentation points).
+    fn transform_element(&mut self, elem: &XsdElement) -> Option<Member> {
         // Resolve the element — could be a ref or a declaration.
         let resolved = self.resolve_element(elem);
 
@@ -465,12 +457,11 @@ impl<'a> TransformContext<'a> {
             if self.profile.is_augmentation_point(qname) {
                 if let Some(augmentations) = self.registry.get_augmentations(qname) {
                     if !augmentations.is_empty() {
-                        let oneof = self.build_augmentation_oneof(
+                        let choice = self.build_augmentation_choice(
                             &to_snake_case(&qname.local_name),
                             augmentations,
-                            field_number,
                         );
-                        return Some(FieldOrOneof::Oneof(oneof));
+                        return Some(Member::Choice(choice));
                     }
                 }
                 // No augmentations found — omit the field.
@@ -482,32 +473,28 @@ impl<'a> TransformContext<'a> {
             if is_abstract {
                 if let Some(members) = self.registry.get_substitution_group(qname) {
                     if !members.is_empty() {
-                        let oneof = self.build_substitution_oneof(
+                        let choice = self.build_substitution_choice(
                             &to_snake_case(&qname.local_name),
                             members,
-                            field_number,
                             elem,
                         );
-                        return Some(FieldOrOneof::Oneof(oneof));
+                        return Some(Member::Choice(choice));
                     }
                 }
             }
         }
 
         // Regular element -> field.
-        let (name, type_name) = self.element_name_and_type(elem);
+        let (name, ty) = self.element_name_and_type(elem);
         let cardinality = element_cardinality(elem);
 
-        let field = ProtoField {
+        Some(Member::Field(Field {
             name,
-            number: *field_number,
-            type_name,
+            ty,
             cardinality,
-            documentation: elem.annotation.documentation.clone(),
-        };
-        *field_number += 1;
-
-        Some(FieldOrOneof::Field(field))
+            doc: elem.annotation.documentation.clone(),
+            annotations: vec![],
+        }))
     }
 
     /// Get the QName for an element (handles both refs and declarations).
@@ -531,115 +518,103 @@ impl<'a> TransformContext<'a> {
         }
     }
 
-    /// Get the field name and proto type for an element.
-    fn element_name_and_type(&mut self, elem: &XsdElement) -> (String, String) {
+    /// Get the field name and IR type for an element.
+    fn element_name_and_type(&mut self, elem: &XsdElement) -> (String, TypeRef) {
         if let Some(ref qname) = elem.element_ref {
             // Element reference: use the ref'd element's name and type.
             let field_name = to_snake_case(&qname.local_name);
-            let type_name = if let Some(resolved) = self.registry.resolve_element(qname) {
-                if let Some(ref type_ref) = resolved.type_ref {
-                    self.resolve_type_name(type_ref)
+            let ty = if let Some(resolved) = self.registry.resolve_element(qname) {
+                if let Some(type_ref) = resolved.type_ref.clone() {
+                    self.resolve_type_ref(&type_ref)
                 } else {
                     // Element with anonymous type or no type.
-                    "string".to_string()
+                    TypeRef::Primitive(Primitive::String)
                 }
             } else {
-                "string".to_string()
+                TypeRef::Primitive(Primitive::String)
             };
-            (field_name, type_name)
+            (field_name, ty)
         } else {
             // Inline element declaration.
             let field_name = to_snake_case(elem.name.as_deref().unwrap_or("unknown"));
-            let type_name = if let Some(ref type_ref) = elem.type_ref {
-                self.resolve_type_name(type_ref)
+            let ty = if let Some(ref type_ref) = elem.type_ref {
+                self.resolve_type_ref(type_ref)
             } else {
-                "string".to_string()
+                TypeRef::Primitive(Primitive::String)
             };
-            (field_name, type_name)
+            (field_name, ty)
         }
     }
 
     // -----------------------------------------------------------------------
-    // Substitution group / augmentation oneofs
+    // Substitution group / augmentation choices
     // -----------------------------------------------------------------------
 
-    /// Build a oneof for a substitution group.
-    fn build_substitution_oneof(
+    /// Build a choice for a substitution group.
+    fn build_substitution_choice(
         &mut self,
-        oneof_name: &str,
+        choice_name: &str,
         members: &[QName],
-        field_number: &mut u32,
         parent_elem: &XsdElement,
-    ) -> ProtoOneof {
-        let mut oneof_fields = Vec::new();
+    ) -> Choice {
+        let mut choice_fields = Vec::new();
 
         for member in members {
             let field_name = to_snake_case(&member.local_name);
-            let type_name = if let Some(resolved) = self.registry.resolve_element(member) {
-                if let Some(ref type_ref) = resolved.type_ref {
-                    self.resolve_type_name(type_ref)
-                } else {
-                    "string".to_string()
-                }
-            } else {
-                "string".to_string()
-            };
+            let ty = self.resolve_element_type(member);
 
-            oneof_fields.push(ProtoField {
+            choice_fields.push(Field {
                 name: field_name,
-                number: *field_number,
-                type_name,
-                cardinality: FieldCardinality::Singular,
-                documentation: None,
+                ty,
+                cardinality: Cardinality::Required,
+                doc: None,
+                annotations: vec![],
             });
-            *field_number += 1;
         }
 
         // If the parent element allows multiple occurrences, note it in docs
-        // (oneof itself can't be repeated in proto3).
+        // (a choice itself can't be repeated).
         let _ = parent_elem;
 
-        ProtoOneof {
-            name: oneof_name.to_string(),
-            fields: oneof_fields,
+        Choice {
+            name: choice_name.to_string(),
+            doc: None,
+            fields: choice_fields,
         }
     }
 
-    /// Build a oneof for an augmentation point.
-    fn build_augmentation_oneof(
-        &mut self,
-        oneof_name: &str,
-        augmentations: &[QName],
-        field_number: &mut u32,
-    ) -> ProtoOneof {
-        let mut oneof_fields = Vec::new();
+    /// Build a choice for an augmentation point.
+    fn build_augmentation_choice(&mut self, choice_name: &str, augmentations: &[QName]) -> Choice {
+        let mut choice_fields = Vec::new();
 
         for aug in augmentations {
             let field_name = to_snake_case(&aug.local_name);
-            let type_name = if let Some(resolved) = self.registry.resolve_element(aug) {
-                if let Some(ref type_ref) = resolved.type_ref {
-                    self.resolve_type_name(type_ref)
-                } else {
-                    "string".to_string()
-                }
-            } else {
-                "string".to_string()
-            };
+            let ty = self.resolve_element_type(aug);
 
-            oneof_fields.push(ProtoField {
+            choice_fields.push(Field {
                 name: field_name,
-                number: *field_number,
-                type_name,
-                cardinality: FieldCardinality::Singular,
-                documentation: None,
+                ty,
+                cardinality: Cardinality::Required,
+                doc: None,
+                annotations: vec![],
             });
-            *field_number += 1;
         }
 
-        ProtoOneof {
-            name: oneof_name.to_string(),
-            fields: oneof_fields,
+        Choice {
+            name: choice_name.to_string(),
+            doc: None,
+            fields: choice_fields,
         }
+    }
+
+    /// Resolve a global element's declared type, defaulting to string.
+    fn resolve_element_type(&mut self, qname: &QName) -> TypeRef {
+        if let Some(resolved) = self.registry.resolve_element(qname) {
+            if let Some(type_ref) = resolved.type_ref.clone() {
+                return self.resolve_type_ref(&type_ref);
+            }
+        }
+        TypeRef::Primitive(Primitive::String)
     }
 
     // -----------------------------------------------------------------------
@@ -651,8 +626,7 @@ impl<'a> TransformContext<'a> {
         &mut self,
         attrs: &[XsdAttribute],
         attr_group_refs: &[QName],
-        fields: &mut Vec<ProtoField>,
-        field_number: &mut u32,
+        members: &mut Vec<Member>,
     ) {
         for group_ref in attr_group_refs {
             // Skip structures:SimpleObjectAttributeGroup (already handled when
@@ -667,7 +641,7 @@ impl<'a> TransformContext<'a> {
             if let Some(group) = self.registry_lookup_attribute_group(group_ref) {
                 let group_attrs = group.attributes.clone();
                 for attr in &group_attrs {
-                    self.emit_attribute_field(attr, fields, field_number);
+                    self.emit_attribute_field(attr, members);
                 }
             }
         }
@@ -681,7 +655,7 @@ impl<'a> TransformContext<'a> {
                     }
                 }
             }
-            self.emit_attribute_field(attr, fields, field_number);
+            self.emit_attribute_field(attr, members);
         }
     }
 
@@ -694,81 +668,80 @@ impl<'a> TransformContext<'a> {
             .find(|g| g.name == qname.local_name)
     }
 
-    /// Emit a single attribute as a proto field.
-    fn emit_attribute_field(
-        &mut self,
-        attr: &XsdAttribute,
-        fields: &mut Vec<ProtoField>,
-        field_number: &mut u32,
-    ) {
-        let (name, type_name) = if let Some(ref attr_ref) = attr.attribute_ref {
+    /// Emit a single attribute as a field.
+    fn emit_attribute_field(&mut self, attr: &XsdAttribute, members: &mut Vec<Member>) {
+        let (name, ty) = if let Some(ref attr_ref) = attr.attribute_ref {
             let field_name = to_snake_case(&attr_ref.local_name);
-            let tname = if let Some(ref type_ref) = attr.type_ref {
-                self.resolve_type_name(type_ref)
+            let ty = if let Some(ref type_ref) = attr.type_ref {
+                self.resolve_type_ref(type_ref)
             } else {
                 // Look up the global attribute for its type.
                 self.resolve_global_attribute_type(attr_ref)
             };
-            (field_name, tname)
+            (field_name, ty)
         } else {
             let field_name = to_snake_case(attr.name.as_deref().unwrap_or("attr"));
-            let tname = if let Some(ref type_ref) = attr.type_ref {
-                self.resolve_type_name(type_ref)
+            let ty = if let Some(ref type_ref) = attr.type_ref {
+                self.resolve_type_ref(type_ref)
             } else {
-                "string".to_string()
+                TypeRef::Primitive(Primitive::String)
             };
-            (field_name, tname)
+            (field_name, ty)
         };
 
         let cardinality = if attr.use_required {
-            FieldCardinality::Singular
+            Cardinality::Required
         } else {
-            FieldCardinality::Optional
+            Cardinality::Optional
         };
 
-        fields.push(ProtoField {
+        members.push(Member::Field(Field {
             name,
-            number: *field_number,
-            type_name,
+            ty,
             cardinality,
-            documentation: attr.annotation.documentation.clone(),
-        });
-        *field_number += 1;
+            doc: attr.annotation.documentation.clone(),
+            annotations: vec![],
+        }));
     }
 
     /// Resolve the type of a global attribute by looking it up in the registry.
-    fn resolve_global_attribute_type(&mut self, qname: &QName) -> String {
+    fn resolve_global_attribute_type(&mut self, qname: &QName) -> TypeRef {
         let schema = self.registry.schemas.get(&qname.namespace);
         if let Some(schema) = schema {
             for attr in &schema.attributes {
                 if attr.name.as_deref() == Some(qname.local_name.as_str()) {
-                    if let Some(ref type_ref) = attr.type_ref {
-                        return self.resolve_type_name(type_ref);
+                    if let Some(type_ref) = attr.type_ref.clone() {
+                        return self.resolve_type_ref(&type_ref);
                     }
                 }
             }
         }
-        "string".to_string()
+        TypeRef::Primitive(Primitive::String)
     }
 
     // -----------------------------------------------------------------------
     // Type resolution
     // -----------------------------------------------------------------------
 
-    /// Resolve a QName type reference to a proto type string.
+    /// Resolve a QName type reference to an IR [`TypeRef`].
+    fn resolve_type_ref(&mut self, qname: &QName) -> TypeRef {
+        type_ref_from_type_string(&self.resolve_type_name(qname))
+    }
+
+    /// Resolve a QName type reference to a proto-style type string.
     ///
     /// This handles:
     /// - XSD built-in types (xs:string, xs:int, etc.)
     /// - NIEM proxy types (niem-xs:string, niem-xs:double, etc.) -> Rule 4
     /// - NIEM wrapper types (Rule 3) -> collapse to the underlying enum/primitive
-    /// - Regular named types -> fully-qualified proto type name
+    /// - Regular named types -> fully-qualified type name
     fn resolve_type_name(&mut self, qname: &QName) -> String {
         // Rule 4: XSD built-in types.
         if qname.namespace.as_str() == XS_NAMESPACE {
             return xsd_builtin_to_proto(&qname.local_name);
         }
 
-        // Rule 4: NIEM proxy types -> unwrap to proto builtins.
+        // Rule 4: NIEM proxy types -> unwrap to builtins.
         if self.profile.should_use_niem_proxy_mapping()
             && qname.namespace.as_str() == NIEM_XS_NAMESPACE
         {
@@ -791,7 +764,7 @@ impl<'a> TransformContext<'a> {
                 SimpleTypeContent::Pattern { .. } => return "string".to_string(),
                 SimpleTypeContent::Enumeration { .. } => {
                     // Reference to an enum type.
-                    return self.qualified_proto_type_name(qname, &st.name);
+                    return self.qualified_type_name(qname, &st.name);
                 }
                 SimpleTypeContent::LengthRestriction { base, .. }
                 | SimpleTypeContent::Range { base, .. }
@@ -821,8 +794,8 @@ impl<'a> TransformContext<'a> {
         format!("{}.{}", target_package, qname.local_name)
     }
 
-    /// Build a fully-qualified proto type name and track the import.
-    fn qualified_proto_type_name(&mut self, qname: &QName, type_name: &str) -> String {
+    /// Build a fully-qualified type name and track the import.
+    fn qualified_type_name(&mut self, qname: &QName, type_name: &str) -> String {
         let target_package = namespace_to_package(qname.namespace.as_str());
         self.maybe_add_import(&target_package);
         format!("{}.{}", target_package, type_name)
@@ -831,8 +804,7 @@ impl<'a> TransformContext<'a> {
     /// Add an import for a target package if it differs from the current package.
     fn maybe_add_import(&mut self, target_package: &str) {
         if target_package != self.current_package {
-            let import_path = package_to_import_path(target_package);
-            self.imports.insert(import_path);
+            self.imports.insert(target_package.to_string());
         }
     }
 
@@ -884,7 +856,7 @@ impl<'a> TransformContext<'a> {
         false
     }
 
-    /// Unwrap a NIEM wrapper to get the underlying proto type.
+    /// Unwrap a NIEM wrapper to get the underlying type string.
     fn unwrap_niem_wrapper(&mut self, ct: &XsdComplexType) -> String {
         if let ComplexTypeContent::SimpleExtension { ref base } = ct.content {
             return self.resolve_type_name(base);
@@ -897,33 +869,27 @@ impl<'a> TransformContext<'a> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Result of transforming a single element: either a field or a oneof.
-enum FieldOrOneof {
-    Field(ProtoField),
-    Oneof(ProtoOneof),
-}
-
 /// Determine the cardinality of an element.
-fn element_cardinality(elem: &XsdElement) -> FieldCardinality {
+fn element_cardinality(elem: &XsdElement) -> Cardinality {
     // Rule 9: maxOccurs="unbounded" -> repeated
     if elem.max_occurs == Occurs::Unbounded {
-        return FieldCardinality::Repeated;
+        return Cardinality::Many;
     }
     if let Occurs::Count(max) = elem.max_occurs {
         if max > 1 {
-            return FieldCardinality::Repeated;
+            return Cardinality::Many;
         }
     }
 
     // Rule 10: minOccurs="0" -> optional
     if elem.min_occurs == Occurs::Count(0) {
-        return FieldCardinality::Optional;
+        return Cardinality::Optional;
     }
 
-    FieldCardinality::Singular
+    Cardinality::Required
 }
 
-/// Derive a name for a choice oneof from its items.
+/// Derive a name for a choice from its items.
 fn derive_choice_name(items: &[CompositorItem]) -> String {
     // If all items are element refs/declarations, try to find a common suffix
     // or just use "choice".
@@ -944,10 +910,16 @@ fn derive_choice_name(items: &[CompositorItem]) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// XSD -> Proto type mapping
+// XSD -> type-string mapping
 // ---------------------------------------------------------------------------
 
-/// Map an XSD built-in type to a proto type.
+/// Map an XSD built-in type to a proto-style type string.
+///
+/// The result is converted to an IR [`TypeRef`] via
+/// [`type_ref_from_type_string`]: bare primitives become
+/// [`Primitive`]s (e.g. `"date"` -> `Primitive::Date`, which writers map
+/// out as they see fit), while dotted names such as
+/// `"google.protobuf.Timestamp"` become qualified named refs.
 fn xsd_builtin_to_proto(local_name: &str) -> String {
     match local_name {
         "string" | "token" | "anyURI" | "NMTOKEN" | "normalizedString" => "string".to_string(),
@@ -962,16 +934,17 @@ fn xsd_builtin_to_proto(local_name: &str) -> String {
         "dateTime" => "google.protobuf.Timestamp".to_string(),
         "duration" => "google.protobuf.Duration".to_string(),
         "base64Binary" | "hexBinary" => "bytes".to_string(),
-        "date" => "string".to_string(),
+        "date" => "date".to_string(),
+        "time" => "time".to_string(),
         "ID" | "IDREF" | "IDREFS" => "string".to_string(),
         _ => "string".to_string(), // safe fallback
     }
 }
 
-/// Map a NIEM proxy type (niem-xs:*) to a proto built-in.
+/// Map a NIEM proxy type (niem-xs:*) to a built-in type string.
 ///
 /// niem-xs proxy types are just wrappers around xs: types with
-/// SimpleObjectAttributeGroup. We map them to the same proto type
+/// SimpleObjectAttributeGroup. We map them to the same type
 /// as the corresponding xs: type.
 fn niem_xs_to_proto(local_name: &str) -> String {
     // The niem-xs type names exactly match the xs: type names
@@ -989,6 +962,56 @@ mod tests {
     use crate::readers::xsd::transform::profile::SchemaProfile;
     use crate::test_fixtures::build_test_registry;
 
+    // -- IR inspection helpers ----------------------------------------------
+
+    fn records(schema: &Schema) -> Vec<&Record> {
+        schema
+            .decls
+            .iter()
+            .filter_map(|d| match d {
+                Decl::Record(r) => Some(r),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn enums(schema: &Schema) -> Vec<&EnumDecl> {
+        schema
+            .decls
+            .iter()
+            .filter_map(|d| match d {
+                Decl::Enum(e) => Some(e),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn find_record<'a>(schema: &'a Schema, name: &str) -> Option<&'a Record> {
+        records(schema).into_iter().find(|r| r.name == name)
+    }
+
+    fn direct_fields(record: &Record) -> Vec<&Field> {
+        record
+            .members
+            .iter()
+            .filter_map(|m| match m {
+                Member::Field(f) => Some(f),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn choices(record: &Record) -> Vec<&Choice> {
+        record
+            .members
+            .iter()
+            .filter_map(|m| match m {
+                Member::Choice(c) => Some(c),
+                _ => None,
+            })
+            .collect()
+    }
+
     // -- Integration: transform a namespace ---------------------------------
 
     #[test]
@@ -996,14 +1019,20 @@ mod tests {
         let reg = build_test_registry();
         let ns = NamespaceUri("http://example.com/schemas/vehicle".to_string());
 
-        let proto =
-            transform_schema(&ns, &reg, SchemaProfile::Niem).expect("should produce a ProtoFile");
+        let schema =
+            transform_schema(&ns, &reg, SchemaProfile::Niem).expect("should produce a Schema");
 
-        assert_eq!(proto.syntax, "proto3");
-        assert_eq!(proto.package, "example_com.schemas.vehicle");
+        assert_eq!(schema.name, "example_com.schemas.vehicle");
         assert!(
-            !proto.messages.is_empty(),
-            "should have at least one message"
+            !records(&schema).is_empty(),
+            "should have at least one record"
+        );
+        assert_eq!(
+            schema.annotations,
+            vec![Annotation::str(
+                "xml.namespace",
+                "http://example.com/schemas/vehicle"
+            )]
         );
     }
 
@@ -1012,16 +1041,12 @@ mod tests {
         let reg = build_test_registry();
         let ns = NamespaceUri("http://example.com/schemas/vehicle".to_string());
 
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
-        let veh_msg = proto
-            .messages
-            .iter()
-            .find(|m| m.name == "VehicleType")
-            .expect("should have VehicleType message");
+        let veh = find_record(&schema, "VehicleType").expect("should have VehicleType record");
 
         // Should have structures attributes (id, ref, uri, metadata).
-        let field_names: Vec<&str> = veh_msg.fields.iter().map(|f| f.name.as_str()).collect();
+        let field_names: Vec<&str> = direct_fields(veh).iter().map(|f| f.name.as_str()).collect();
         assert!(
             field_names.contains(&"structures_id"),
             "should have structures_id field, got: {field_names:?}"
@@ -1039,55 +1064,50 @@ mod tests {
             "should have entity_details field, got: {field_names:?}"
         );
 
-        // Should have audit_record field (repeated).
-        let audit_field = veh_msg
-            .fields
-            .iter()
+        // Should have audit_record field (many).
+        let audit_field = direct_fields(veh)
+            .into_iter()
             .find(|f| f.name == "audit_record")
             .expect("should have audit_record field");
         assert_eq!(
             audit_field.cardinality,
-            FieldCardinality::Repeated,
-            "audit_record should be repeated"
+            Cardinality::Many,
+            "audit_record should be many"
         );
     }
 
     #[test]
-    fn inspection_report_type_has_substitution_oneof() {
+    fn inspection_report_type_has_substitution_choice() {
         let reg = build_test_registry();
         let ns = NamespaceUri("http://example.com/schemas/vehicle".to_string());
 
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
         // InspectionReportType references StatusCodeAbstract which has
-        // a substitution group (StatusCode). This should produce a oneof.
-        let ir_msg = proto
-            .messages
-            .iter()
-            .find(|m| m.name == "InspectionReportType")
-            .expect("should have InspectionReportType message");
+        // a substitution group (StatusCode). This should produce a choice.
+        let ir_rec = find_record(&schema, "InspectionReportType")
+            .expect("should have InspectionReportType record");
 
-        let oneof_names: Vec<&str> = ir_msg.oneofs.iter().map(|o| o.name.as_str()).collect();
+        let choice_names: Vec<&str> = choices(ir_rec).iter().map(|c| c.name.as_str()).collect();
         assert!(
-            !oneof_names.is_empty(),
-            "InspectionReportType should have a oneof for StatusCodeAbstract substitution group, got: {oneof_names:?}"
+            !choice_names.is_empty(),
+            "InspectionReportType should have a choice for StatusCodeAbstract substitution group, got: {choice_names:?}"
         );
 
-        // The oneof should contain "status_code" as one of its members.
-        let status_oneof = ir_msg
-            .oneofs
-            .iter()
-            .find(|o| o.name.contains("status_code"))
-            .expect("should have a oneof related to status_code");
+        // The choice should contain "status_code" as one of its members.
+        let status_choice = choices(ir_rec)
+            .into_iter()
+            .find(|c| c.name.contains("status_code"))
+            .expect("should have a choice related to status_code");
 
-        let field_names: Vec<&str> = status_oneof
+        let field_names: Vec<&str> = status_choice
             .fields
             .iter()
             .map(|f| f.name.as_str())
             .collect();
         assert!(
             field_names.contains(&"status_code"),
-            "status oneof should contain status_code, got: {field_names:?}"
+            "status choice should contain status_code, got: {field_names:?}"
         );
     }
 
@@ -1096,27 +1116,19 @@ mod tests {
         let reg = build_test_registry();
         let ns = NamespaceUri("http://example.com/schemas/vehicle".to_string());
 
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
-        let veh_msg = proto
-            .messages
-            .iter()
-            .find(|m| m.name == "VehicleType")
-            .expect("should have VehicleType message");
+        let veh = find_record(&schema, "VehicleType").expect("should have VehicleType record");
 
         // VehicleAugmentationPoint has no concrete augmentations
-        // in the test dataset, so it should NOT appear as a field or oneof.
-        let has_aug_field = veh_msg
-            .fields
+        // in the test dataset, so it should NOT appear as a field or choice.
+        let has_aug_field = direct_fields(veh)
             .iter()
             .any(|f| f.name.contains("augmentation"));
-        let has_aug_oneof = veh_msg
-            .oneofs
-            .iter()
-            .any(|o| o.name.contains("augmentation"));
+        let has_aug_choice = choices(veh).iter().any(|c| c.name.contains("augmentation"));
 
         assert!(
-            !has_aug_field && !has_aug_oneof,
+            !has_aug_field && !has_aug_choice,
             "VehicleAugmentationPoint should be omitted when no augmentations exist"
         );
     }
@@ -1126,32 +1138,30 @@ mod tests {
         let reg = build_test_registry();
         let ns = NamespaceUri("http://example.com/schemas/common-types".to_string());
 
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
-        let confidence_enum = proto
-            .enums
-            .iter()
+        let confidence_enum = enums(&schema)
+            .into_iter()
             .find(|e| e.name == "ConfidenceCodeSimpleType")
             .expect("should have ConfidenceCodeSimpleType enum");
 
-        // Should have UNKNOWN at number 0.
-        let unknown_val = confidence_enum
+        // Values carry the raw XSD enumeration strings: no synthetic value,
+        // no prefixing (writers add those).
+        let value_names: Vec<&str> = confidence_enum
             .values
             .iter()
-            .find(|v| v.name.contains("UNKNOWN"))
-            .expect("should have an UNKNOWN value");
-        assert_eq!(unknown_val.number, 0, "UNKNOWN should be at number 0");
-
-        // Should have HIGH value.
-        let high_val = confidence_enum
-            .values
-            .iter()
-            .find(|v| v.name.contains("HIGH") && !v.name.contains("VERY"))
-            .expect("should have a HIGH value");
+            .map(|v| v.name.as_str())
+            .collect();
         assert!(
-            high_val.name.starts_with("CONFIDENCE_CODE_"),
-            "HIGH value should be prefixed: {}",
-            high_val.name
+            value_names.contains(&"HIGH"),
+            "should have raw HIGH value, got: {value_names:?}"
+        );
+        assert!(
+            confidence_enum
+                .values
+                .iter()
+                .all(|v| v.annotations.is_empty()),
+            "identifier-safe values need no xml.value annotation"
         );
     }
 
@@ -1173,63 +1183,56 @@ mod tests {
         let reg = build_test_registry();
         let ns = NamespaceUri("http://example.com/schemas/common-types".to_string());
 
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
         // CapabilityConfidenceCodeType is a NIEM wrapper around
-        // ConfidenceCodeSimpleType. It should NOT appear as a message.
-        let has_wrapper_msg = proto
-            .messages
-            .iter()
-            .any(|m| m.name == "CapabilityConfidenceCodeType");
+        // ConfidenceCodeSimpleType. It should NOT appear as a record.
         assert!(
-            !has_wrapper_msg,
-            "CapabilityConfidenceCodeType should be collapsed (not emitted as message)"
+            find_record(&schema, "CapabilityConfidenceCodeType").is_none(),
+            "CapabilityConfidenceCodeType should be collapsed (not emitted as record)"
         );
     }
 
     #[test]
-    fn composite_object_type_has_choice_oneof() {
+    fn composite_object_type_has_choice() {
         let reg = build_test_registry();
         let ns = NamespaceUri("http://example.com/schemas/core".to_string());
 
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
-        let co_msg = proto
-            .messages
-            .iter()
-            .find(|m| m.name == "CompositeObjectType")
-            .expect("should have CompositeObjectType message");
+        let co_rec = find_record(&schema, "CompositeObjectType")
+            .expect("should have CompositeObjectType record");
 
-        // Should have a oneof for the choice.
+        // Should have a choice for the xs:choice.
+        let co_choices = choices(co_rec);
         assert!(
-            !co_msg.oneofs.is_empty(),
-            "CompositeObjectType should have at least one oneof for the xs:choice"
+            !co_choices.is_empty(),
+            "CompositeObjectType should have at least one choice for the xs:choice"
         );
 
         // The choice should contain vehicle as one of the options.
-        let choice_oneof = &co_msg.oneofs[0];
-        let choice_field_names: Vec<&str> = choice_oneof
+        let choice_field_names: Vec<&str> = co_choices[0]
             .fields
             .iter()
             .map(|f| f.name.as_str())
             .collect();
         assert!(
             choice_field_names.contains(&"vehicle"),
-            "choice oneof should contain vehicle, got: {choice_field_names:?}"
+            "choice should contain vehicle, got: {choice_field_names:?}"
         );
     }
 
     #[test]
-    fn structures_namespace_produces_no_messages() {
+    fn structures_namespace_produces_no_records() {
         let reg = build_test_registry();
         let ns = NamespaceUri(STRUCTURES_NAMESPACE.to_string());
 
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
         // We skip structures types (they are inlined into extending types).
         assert!(
-            proto.messages.is_empty(),
-            "structures namespace should produce no messages"
+            records(&schema).is_empty(),
+            "structures namespace should produce no records"
         );
     }
 
@@ -1245,57 +1248,19 @@ mod tests {
     }
 
     #[test]
-    fn field_numbers_are_sequential_starting_from_1() {
-        let reg = build_test_registry();
-        let ns = NamespaceUri("http://example.com/schemas/common-types".to_string());
-
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
-
-        for msg in &proto.messages {
-            // Collect all field numbers (from both regular fields and oneofs).
-            let mut all_numbers: Vec<u32> = msg.fields.iter().map(|f| f.number).collect();
-            for oneof in &msg.oneofs {
-                for f in &oneof.fields {
-                    all_numbers.push(f.number);
-                }
-            }
-
-            if all_numbers.is_empty() {
-                continue;
-            }
-
-            all_numbers.sort();
-            assert_eq!(
-                all_numbers[0], 1,
-                "field numbers in {} should start at 1",
-                msg.name
-            );
-
-            // Check they are sequential.
-            for window in all_numbers.windows(2) {
-                assert_eq!(
-                    window[1],
-                    window[0] + 1,
-                    "field numbers in {} should be sequential: {:?}",
-                    msg.name,
-                    all_numbers
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn imports_are_tracked() {
+    fn imports_are_tracked_as_package_names() {
         let reg = build_test_registry();
         let ns = NamespaceUri("http://example.com/schemas/core".to_string());
 
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
 
         // core references veh:Vehicle, so it should import that package.
         assert!(
-            proto.imports.iter().any(|i| i.contains("vehicle")),
+            schema
+                .imports
+                .contains(&"example_com.schemas.vehicle".to_string()),
             "should import vehicle package, got: {:?}",
-            proto.imports
+            schema.imports
         );
     }
 
@@ -1322,10 +1287,53 @@ mod tests {
         assert_eq!(xsd_builtin_to_proto("duration"), "google.protobuf.Duration");
         assert_eq!(xsd_builtin_to_proto("base64Binary"), "bytes");
         assert_eq!(xsd_builtin_to_proto("hexBinary"), "bytes");
-        assert_eq!(xsd_builtin_to_proto("date"), "string");
+        assert_eq!(xsd_builtin_to_proto("date"), "date");
+        assert_eq!(xsd_builtin_to_proto("time"), "time");
         assert_eq!(xsd_builtin_to_proto("ID"), "string");
         assert_eq!(xsd_builtin_to_proto("IDREF"), "string");
         assert_eq!(xsd_builtin_to_proto("IDREFS"), "string");
+    }
+
+    #[test]
+    fn type_ref_from_type_string_maps_primitives_and_names() {
+        assert_eq!(
+            type_ref_from_type_string("double"),
+            TypeRef::Primitive(Primitive::Float64)
+        );
+        assert_eq!(
+            type_ref_from_type_string("float"),
+            TypeRef::Primitive(Primitive::Float32)
+        );
+        assert_eq!(
+            type_ref_from_type_string("string"),
+            TypeRef::Primitive(Primitive::String)
+        );
+        assert_eq!(
+            type_ref_from_type_string("date"),
+            TypeRef::Primitive(Primitive::Date)
+        );
+        assert_eq!(
+            type_ref_from_type_string("Person"),
+            TypeRef::named(None, "Person")
+        );
+        assert_eq!(
+            type_ref_from_type_string("a.b.C"),
+            TypeRef::named(Some("a.b"), "C")
+        );
+    }
+
+    #[test]
+    fn enum_value_from_raw_preserves_identifier_values() {
+        let v = enum_value_from_raw("HIGH", None);
+        assert_eq!(v.name, "HIGH");
+        assert!(v.annotations.is_empty());
+    }
+
+    #[test]
+    fn enum_value_from_raw_sanitizes_and_annotates_non_identifiers() {
+        let v = enum_value_from_raw("5.56 mm", None);
+        assert_eq!(v.name, "_5_56_mm");
+        assert_eq!(v.annotations, vec![Annotation::str("xml.value", "5.56 mm")]);
     }
 
     // -- Generic profile tests -----------------------------------------------
@@ -1350,15 +1358,15 @@ mod tests {
     }
 
     #[test]
-    fn generic_structures_namespace_produces_messages() {
+    fn generic_structures_namespace_produces_records() {
         let reg = generic_registry(&[STRUCTURES_XSD]);
         let ns = NamespaceUri(STRUCTURES_NAMESPACE.to_string());
 
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
 
         assert!(
-            !proto.messages.is_empty(),
-            "generic profile should emit messages for structures namespace"
+            !records(&schema).is_empty(),
+            "generic profile should emit records for structures namespace"
         );
     }
 
@@ -1389,18 +1397,18 @@ mod tests {
 
         let reg = generic_registry(&[STRUCTURES_XSD, wrapper_xsd]);
         let ns = NamespaceUri("http://example.com/wrapper".to_string());
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
 
-        let wrapper_msg = proto
-            .messages
+        let wrapper_rec = find_record(&schema, "ColorCodeType")
+            .expect("generic profile should emit ColorCodeType as a record");
+
+        let field_names: Vec<&str> = direct_fields(wrapper_rec)
             .iter()
-            .find(|m| m.name == "ColorCodeType")
-            .expect("generic profile should emit ColorCodeType as a message");
-
-        let field_names: Vec<&str> = wrapper_msg.fields.iter().map(|f| f.name.as_str()).collect();
+            .map(|f| f.name.as_str())
+            .collect();
         assert!(
             field_names.contains(&"value"),
-            "wrapper message should have a 'value' field, got: {field_names:?}"
+            "wrapper record should have a 'value' field, got: {field_names:?}"
         );
     }
 
@@ -1427,15 +1435,11 @@ mod tests {
 
         let reg = generic_registry(&[STRUCTURES_XSD, ext_xsd]);
         let ns = NamespaceUri("http://example.com/ext".to_string());
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
 
-        let msg = proto
-            .messages
-            .iter()
-            .find(|m| m.name == "VehicleType")
-            .expect("should have VehicleType message");
+        let rec = find_record(&schema, "VehicleType").expect("should have VehicleType record");
 
-        let field_names: Vec<&str> = msg.fields.iter().map(|f| f.name.as_str()).collect();
+        let field_names: Vec<&str> = direct_fields(rec).iter().map(|f| f.name.as_str()).collect();
         assert!(
             !field_names.contains(&"structures_id"),
             "generic profile should NOT inline structures_id, got: {field_names:?}"
@@ -1472,45 +1476,35 @@ mod tests {
         let reg = generic_registry(&[STRUCTURES_XSD, aug_xsd]);
         let ns = NamespaceUri("http://example.com/aug".to_string());
 
-        let proto_niem = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
-        let proto_generic = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+        let schema_niem = transform_schema(&ns, &reg, SchemaProfile::Niem).unwrap();
+        let schema_generic = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
 
-        // In NIEM mode the augmentation point produces a special oneof.
-        let niem_msg = proto_niem
-            .messages
+        // In NIEM mode the augmentation point produces a special choice.
+        let niem_rec = find_record(&schema_niem, "ThingType").unwrap();
+        let niem_has_aug_choice = choices(niem_rec)
             .iter()
-            .find(|m| m.name == "ThingType")
-            .unwrap();
-        let niem_has_aug_oneof = niem_msg
-            .oneofs
-            .iter()
-            .any(|o| o.name.contains("augmentation"));
+            .any(|c| c.name.contains("augmentation"));
         assert!(
-            niem_has_aug_oneof,
-            "NIEM profile should produce augmentation oneof"
+            niem_has_aug_choice,
+            "NIEM profile should produce augmentation choice"
         );
 
         // In generic mode the same element is treated as a regular
         // substitution group (since it is abstract).
-        let generic_msg = proto_generic
-            .messages
-            .iter()
-            .find(|m| m.name == "ThingType")
-            .unwrap();
-        let generic_oneof = generic_msg
-            .oneofs
-            .iter()
-            .find(|o| o.name.contains("thing_augmentation_point"));
+        let generic_rec = find_record(&schema_generic, "ThingType").unwrap();
+        let generic_choice = choices(generic_rec)
+            .into_iter()
+            .find(|c| c.name.contains("thing_augmentation_point"));
         assert!(
-            generic_oneof.is_some(),
-            "generic profile should handle augmentation point as a regular substitution group oneof"
+            generic_choice.is_some(),
+            "generic profile should handle augmentation point as a regular substitution group choice"
         );
     }
 
     #[test]
     fn generic_niem_proxy_types_not_collapsed() {
         // A type referencing niem-xs:string — in generic mode it should NOT be
-        // collapsed to proto `string`.
+        // collapsed to a plain string.
         let proxy_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
         <xs:schema targetNamespace="http://example.com/proxy"
             xmlns:p="http://example.com/proxy"
@@ -1533,28 +1527,24 @@ mod tests {
 
         let reg = generic_registry(&[STRUCTURES_XSD, NIEM_XS_XSD, proxy_xsd]);
         let ns = NamespaceUri("http://example.com/proxy".to_string());
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
 
-        let msg = proto
-            .messages
-            .iter()
-            .find(|m| m.name == "ItemType")
-            .unwrap();
+        let rec = find_record(&schema, "ItemType").unwrap();
 
-        let label_field = msg
-            .fields
-            .iter()
+        let label_field = direct_fields(rec)
+            .into_iter()
             .find(|f| f.name == "label")
             .expect("should have label field");
 
         assert_ne!(
-            label_field.type_name, "string",
-            "generic profile should not collapse niem-xs:string to proto string"
+            label_field.ty,
+            TypeRef::Primitive(Primitive::String),
+            "generic profile should not collapse niem-xs:string to plain string"
         );
         assert!(
-            label_field.type_name.contains("niem"),
+            label_field.ty.to_string().contains("niem"),
             "generic profile should reference niem proxy type: {}",
-            label_field.type_name
+            label_field.ty
         );
     }
 
@@ -1581,15 +1571,11 @@ mod tests {
 
         let reg = generic_registry(&[STRUCTURES_XSD, attr_xsd]);
         let ns = NamespaceUri("http://example.com/attrs".to_string());
-        let proto = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
 
-        let msg = proto
-            .messages
-            .iter()
-            .find(|m| m.name == "WidgetType")
-            .expect("should have WidgetType message");
+        let rec = find_record(&schema, "WidgetType").expect("should have WidgetType record");
 
-        let field_names: Vec<&str> = msg.fields.iter().map(|f| f.name.as_str()).collect();
+        let field_names: Vec<&str> = direct_fields(rec).iter().map(|f| f.name.as_str()).collect();
         // In generic mode, structures attributes are NOT inlined via the
         // special NIEM path. The ObjectType base becomes a composition field.
         assert!(
