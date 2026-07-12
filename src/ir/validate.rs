@@ -77,10 +77,10 @@ fn check_ref(
             return;
         }
         let target_schema = schema.as_deref().unwrap_or(current.name.as_str());
-        // Qualified refs into schemas outside the provided set are treated as
-        // external (e.g. google.protobuf well-known types) and not validated.
+        // Qualified refs into well-known external namespaces (google.protobuf
+        // types) are not validated; any other ref must resolve within the set.
         let Some(names) = index.get(target_schema) else {
-            if schema.is_none() {
+            if !target_schema.starts_with("google.") {
                 errors.push(format!("{context}: unresolved type reference `{ty}`"));
             }
             return;
@@ -168,6 +168,18 @@ mod tests {
             )],
         )]);
         assert!(validate(&[s]).is_empty());
+    }
+
+    #[test]
+    fn qualified_ref_to_absent_non_google_schema_is_reported() {
+        // A typo'd schema qualifier must not silently pass as "external".
+        let s = schema_with(vec![record(
+            "Person",
+            vec![field("home", TypeRef::named(Some("comon"), "Address"))],
+        )]);
+        let errs = validate(&[s]);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("comon.Address"), "got: {}", errs[0]);
     }
 
     #[test]
