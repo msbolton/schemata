@@ -12,6 +12,7 @@ pub struct Schema {
     pub name: String,
     pub annotations: Vec<Annotation>,
     /// Dotted names of other IR schemas referenced by qualified type refs.
+    /// Readers must deduplicate entries; writers expect no duplicates.
     pub imports: Vec<String>,
     pub decls: Vec<Decl>,
     /// Source file this schema came from (attribution comments only).
@@ -82,6 +83,7 @@ pub enum TypeRef {
     Named {
         /// Dotted schema name for cross-schema refs; None for same-schema.
         schema: Option<String>,
+        /// Unqualified declaration name within the target schema.
         name: String,
     },
 }
@@ -129,6 +131,7 @@ pub enum Primitive {
 }
 
 impl Primitive {
+    /// The canonical set of all primitives, in declaration order.
     pub const ALL: [Primitive; 15] = [
         Primitive::String,
         Primitive::Bool,
@@ -218,6 +221,10 @@ impl Annotation {
     }
 }
 
+/// A single annotation argument.
+///
+/// Note: the `Float` variant means this type (and every type containing it)
+/// is `PartialEq` but not `Eq`, so these types cannot be used as map keys.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AnnotationValue {
     Str(String),
@@ -233,7 +240,14 @@ impl fmt::Display for AnnotationValue {
                 write!(f, "\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
             }
             AnnotationValue::Int(i) => write!(f, "{i}"),
-            AnnotationValue::Float(x) => write!(f, "{x}"),
+            AnnotationValue::Float(x) => {
+                let s = format!("{x}");
+                if s.contains('.') || s.contains('e') || s.contains('E') {
+                    f.write_str(&s)
+                } else {
+                    write!(f, "{s}.0")
+                }
+            }
             AnnotationValue::Ident(s) => f.write_str(s),
         }
     }
@@ -290,5 +304,13 @@ mod tests {
             args: vec![AnnotationValue::Int(2), AnnotationValue::Int(5)],
         };
         assert_eq!(c.to_string(), "@occurs(2, 5)");
+    }
+
+    #[test]
+    fn float_annotation_display_is_round_trippable() {
+        let whole = Annotation::new("ratio", vec![AnnotationValue::Float(1.0)]);
+        assert_eq!(whole.to_string(), "@ratio(1.0)");
+        let fractional = Annotation::new("ratio", vec![AnnotationValue::Float(2.5)]);
+        assert_eq!(fractional.to_string(), "@ratio(2.5)");
     }
 }
