@@ -1,0 +1,92 @@
+// Generated from telemetry.xsd
+syntax = "proto3";
+
+package example_com.fleet.telemetry;
+
+import "example_com/fleet/common.proto";
+
+enum SeveritySimpleType {
+  // Unspecified/unknown value.
+  SEVERITY_UNKNOWN = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_WARNING = 2;
+  SEVERITY_ERROR = 3;
+  SEVERITY_CRITICAL = 4;
+}
+
+// A timestamped position report for a vehicle, including heading and speed.
+message PositionReportType {
+  string vehicle_ref = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  example_com.fleet.common.CoordinateType position = 3;
+  optional double heading_degrees = 4;
+  optional double speed_kmh = 5;
+  optional example_com.fleet.telemetry.PositionAccuracyType accuracy = 6;
+}
+
+message PositionAccuracyType {
+  double horizontal_error_meters = 1;
+  optional double vertical_error_meters = 2;
+  optional uint64 satellite_count = 3;
+}
+
+// Engine health and diagnostic data collected from the vehicle's onboard systems.
+message EngineDiagnosticsType {
+  string vehicle_ref = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  optional uint64 engine_rpm = 3;
+  optional double coolant_temperature = 4;
+  optional double oil_pressure_k_pa = 5;
+  optional double fuel_level_percent = 6;
+  optional double battery_voltage = 7;
+  repeated example_com.fleet.telemetry.DiagnosticFaultType active_fault = 8;
+}
+
+message DiagnosticFaultType {
+  string code = 1;
+  example_com.fleet.telemetry.SeveritySimpleType severity = 2;
+  optional string description = 3;
+  google.protobuf.Timestamp first_occurrence = 4;
+  uint64 occurrence_count = 5;
+}
+
+// Abstract base for all sensor readings. Concrete subtypes provide
+//         the measurement-specific fields. Exercises abstract complex type
+//         with multiple concrete extensions.
+message SensorReadingType {
+  string sensor_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  string vehicle_ref = 3;
+}
+
+// A temperature sensor reading.
+message TemperatureReadingType {
+  // Base type: SensorReadingType
+  example_com.fleet.telemetry.SensorReadingType sensor_reading = 1;
+  double value_celsius = 2;
+  optional string sensor_location = 3;
+}
+
+message PressureReadingType {
+  // Base type: SensorReadingType
+  example_com.fleet.telemetry.SensorReadingType sensor_reading = 1;
+  double value_k_pa = 2;
+  optional string sensor_location = 3;
+}
+
+message VoltageReadingType {
+  // Base type: SensorReadingType
+  example_com.fleet.telemetry.SensorReadingType sensor_reading = 1;
+  double value_volts = 2;
+  optional string circuit_name = 3;
+}
+
+// A batch of telemetry data collected over a time window.
+//         Groups position reports, diagnostics, and sensor readings.
+message TelemetryBatchType {
+  string batch_id = 1;
+  google.protobuf.Timestamp collection_start = 2;
+  google.protobuf.Timestamp collection_end = 3;
+  repeated example_com.fleet.telemetry.PositionReportType position_report = 4;
+  repeated example_com.fleet.telemetry.EngineDiagnosticsType engine_diagnostics = 5;
+}

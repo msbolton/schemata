@@ -1,0 +1,71 @@
+// Generated from vehicle.xsd
+syntax = "proto3";
+
+package example_com.fleet.vehicle;
+
+import "example_com/fleet/common.proto";
+
+enum MaintenanceCategorySimpleType {
+  // Unspecified/unknown value.
+  MAINTENANCE_CATEGORY_UNKNOWN = 0;
+  MAINTENANCE_CATEGORY_SCHEDULED = 1;
+  MAINTENANCE_CATEGORY_UNSCHEDULED = 2;
+  MAINTENANCE_CATEGORY_EMERGENCY = 3;
+  MAINTENANCE_CATEGORY_INSPECTION = 4;
+  MAINTENANCE_CATEGORY_MODIFICATION = 5;
+}
+
+// A tracked vehicle in the fleet. Extends IdentifiableType to inherit
+//         identifier and timestamp fields.
+message VehicleType {
+  // Base type: IdentifiableType
+  example_com.fleet.common.IdentifiableType identifiable = 1;
+  string callsign = 2;
+  string make = 3;
+  string model = 4;
+  optional string year_of_manufacture = 5;
+  example_com.fleet.common.FuelTypeSimpleType fuel_type = 6;
+  optional double max_range_km = 7;
+  example_com.fleet.common.StatusCodeType current_status = 8;
+  optional example_com.fleet.common.CoordinateType home_location = 9;
+  repeated example_com.fleet.vehicle.MaintenanceRecordType maintenance_history = 16;
+  oneof vehicle_category_abstract {
+    string ground_vehicle = 10;
+    string air_vehicle = 11;
+    string water_vehicle = 12;
+  }
+  oneof vehicle_capability_abstract {
+    string cargo_capability = 13;
+    string passenger_capability = 14;
+    string towing_capability = 15;
+  }
+}
+
+// A record of a maintenance action performed on a vehicle.
+message MaintenanceRecordType {
+  string record_id = 1;
+  google.protobuf.Timestamp performed_date_time = 2;
+  example_com.fleet.vehicle.MaintenanceCategorySimpleType category = 3;
+  string summary = 4;
+  optional string details = 5;
+  optional double cost_usd = 6;
+  repeated string parts_replaced = 7;
+  optional string next_scheduled_date = 8;
+}
+
+// The condition of a vehicle, reported either as a structured assessment
+//         or as a free-text note. Exercises the xs:choice compositor pattern.
+message VehicleConditionType {
+  google.protobuf.Timestamp reported_date_time = 1;
+  oneof structured_assessment_choice {
+    example_com.fleet.vehicle.StructuredAssessmentType structured_assessment = 2;
+    string free_text_note = 3;
+  }
+}
+
+message StructuredAssessmentType {
+  example_com.fleet.common.StatusCodeSimpleType overall_status = 1;
+  double fuel_level_percent = 2;
+  uint64 odometer_km = 3;
+  repeated string deficiencies = 4;
+}

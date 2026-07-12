@@ -1,0 +1,90 @@
+// Generated from mission.xsd
+syntax = "proto3";
+
+package example_com.fleet.mission;
+
+import "example_com/fleet/common.proto";
+import "example_com/fleet/personnel.proto";
+
+enum MissionPhaseSimpleType {
+  // Unspecified/unknown value.
+  MISSION_PHASE_UNKNOWN = 0;
+  MISSION_PHASE_PLANNING = 1;
+  MISSION_PHASE_BRIEFED = 2;
+  MISSION_PHASE_IN_PROGRESS = 3;
+  MISSION_PHASE_ON_HOLD = 4;
+  MISSION_PHASE_COMPLETED = 5;
+  MISSION_PHASE_ABORTED = 6;
+}
+
+// A mission or operation that assigns personnel and vehicles
+//         to accomplish an objective within a defined area and timeframe.
+message MissionType {
+  // Base type: IdentifiableType
+  example_com.fleet.common.IdentifiableType identifiable = 1;
+  string mission_code = 2;
+  string name = 3;
+  optional string description = 4;
+  example_com.fleet.common.PriorityLevelSimpleType priority = 5;
+  example_com.fleet.mission.MissionPhaseSimpleType phase = 6;
+  google.protobuf.Timestamp planned_start_date_time = 7;
+  optional google.protobuf.Timestamp planned_end_date_time = 8;
+  optional google.protobuf.Timestamp actual_start_date_time = 9;
+  optional google.protobuf.Timestamp actual_end_date_time = 10;
+  optional example_com.fleet.mission.OperatingAreaType operating_area = 11;
+  repeated example_com.fleet.mission.MissionAssetType assigned_asset = 12;
+  repeated example_com.fleet.mission.WaypointType waypoint = 13;
+  repeated example_com.fleet.mission.ObjectiveType objective = 14;
+}
+
+// Defines the geographic area for a mission, either as a bounding box,
+//         a center point with radius, or a named region. Exercises xs:choice.
+message OperatingAreaType {
+  oneof bounding_box_choice {
+    example_com.fleet.common.BoundingBoxType bounding_box = 1;
+    example_com.fleet.mission.CircularAreaType circular_area = 2;
+    string named_region = 3;
+  }
+}
+
+message CircularAreaType {
+  example_com.fleet.common.CoordinateType center = 1;
+  double radius_km = 2;
+}
+
+// A vehicle and its assigned crew for this mission.
+//         Demonstrates cross-namespace element references.
+message MissionAssetType {
+  string vehicle_ref = 1;
+  string vehicle_callsign = 2;
+  repeated example_com.fleet.mission.CrewMemberType crew_member = 3;
+  optional example_com.fleet.common.CoordinateType departure_location = 4;
+}
+
+message CrewMemberType {
+  string person_ref = 1;
+  example_com.fleet.personnel.AssignmentRoleSimpleType role = 2;
+}
+
+// A named waypoint along a mission route.
+message WaypointType {
+  uint64 sequence_number = 1;
+  optional string name = 2;
+  example_com.fleet.common.CoordinateType location = 3;
+  optional google.protobuf.Timestamp planned_arrival_date_time = 4;
+  optional google.protobuf.Duration hold_duration = 5;
+}
+
+// A mission objective. The objective content is polymorphic:
+//         it can be a location-based task or a general task description.
+message ObjectiveType {
+  string objective_id = 1;
+  example_com.fleet.common.PriorityLevelSimpleType priority = 2;
+  string description = 3;
+  optional bool is_complete = 7;
+  oneof target_location_choice {
+    example_com.fleet.common.CoordinateType target_location = 4;
+    example_com.fleet.common.BoundingBoxType target_area = 5;
+    string target_asset_ref = 6;
+  }
+}
