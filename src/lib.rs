@@ -1,9 +1,9 @@
 pub mod cli;
+pub mod convert;
 pub mod error;
-pub mod proto;
-pub mod resolver;
-pub mod transform;
-pub mod xsd;
+pub mod ir;
+pub mod readers;
+pub mod writers;
 
 #[cfg(test)]
 pub mod test_fixtures;

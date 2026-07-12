@@ -6,9 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::resolver::{build_type_registry, TypeRegistry};
-use crate::xsd::model::XsdSchema;
-use crate::xsd::parser::parse_schema;
+use crate::readers::xsd::model::XsdSchema;
+use crate::readers::xsd::parser::parse_schema;
+use crate::readers::xsd::resolver::{build_type_registry, TypeRegistry};
 
 // ---------------------------------------------------------------------------
 // 1. STRUCTURES_XSD

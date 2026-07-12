@@ -1,0 +1,88 @@
+schema example_com.fleet.mission @xml.namespace("http://example.com/fleet/mission") @source("mission.xsd")
+
+enum MissionPhaseSimpleType {
+  PLANNING
+  BRIEFED
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  ABORTED
+}
+
+/// A mission code: two uppercase letters, a hyphen, and 4 digits.
+///         Example: OP-1234.
+type MissionCodeType = string @pattern("[A-Z]{2}-[0-9]{4}")
+
+/// A mission or operation that assigns personnel and vehicles
+///         to accomplish an objective within a defined area and timeframe.
+record MissionType {
+  /// Base type: IdentifiableType
+  identifiable: example_com.fleet.common.IdentifiableType
+  mission_code: MissionCodeType
+  name: example_com.fleet.common.ShortStringType
+  description: example_com.fleet.common.DescriptionType?
+  priority: example_com.fleet.common.PriorityLevelSimpleType
+  phase: example_com.fleet.mission.MissionPhaseSimpleType
+  planned_start_date_time: google.protobuf.Timestamp
+  planned_end_date_time: google.protobuf.Timestamp?
+  actual_start_date_time: google.protobuf.Timestamp?
+  actual_end_date_time: google.protobuf.Timestamp?
+  operating_area: example_com.fleet.mission.OperatingAreaType?
+  assigned_asset: example_com.fleet.mission.MissionAssetType*
+  waypoint: example_com.fleet.mission.WaypointType*
+  objective: example_com.fleet.mission.ObjectiveType*
+}
+
+/// Defines the geographic area for a mission, either as a bounding box,
+///         a center point with radius, or a named region. Exercises xs:choice.
+record OperatingAreaType {
+  choice bounding_box_choice {
+    bounding_box: example_com.fleet.common.BoundingBoxType
+    circular_area: example_com.fleet.mission.CircularAreaType
+    named_region: example_com.fleet.common.ShortStringType
+  }
+}
+
+record CircularAreaType {
+  center: example_com.fleet.common.CoordinateType
+  radius_km: example_com.fleet.common.PositiveDistanceType
+}
+
+/// A vehicle and its assigned crew for this mission.
+///         Demonstrates cross-namespace element references.
+record MissionAssetType {
+  vehicle_ref: example_com.fleet.common.UuidType
+  vehicle_callsign: example_com.fleet.common.CallsignType
+  crew_member: example_com.fleet.mission.CrewMemberType*
+  departure_location: example_com.fleet.common.CoordinateType?
+}
+
+record CrewMemberType {
+  person_ref: example_com.fleet.common.UuidType
+  role: example_com.fleet.personnel.AssignmentRoleSimpleType
+}
+
+/// A named waypoint along a mission route.
+record WaypointType {
+  sequence_number: uint64
+  name: example_com.fleet.common.ShortStringType?
+  location: example_com.fleet.common.CoordinateType
+  planned_arrival_date_time: google.protobuf.Timestamp?
+  hold_duration: google.protobuf.Duration?
+}
+
+/// A mission objective. The objective content is polymorphic:
+///         it can be a location-based task or a general task description.
+record ObjectiveType {
+  objective_id: example_com.fleet.common.UuidType
+  priority: example_com.fleet.common.PriorityLevelSimpleType
+  description: example_com.fleet.common.DescriptionType
+
+  choice target_location_choice {
+    target_location: example_com.fleet.common.CoordinateType
+    target_area: example_com.fleet.common.BoundingBoxType
+    target_asset_ref: example_com.fleet.common.UuidType
+  }
+
+  is_complete: bool?
+}

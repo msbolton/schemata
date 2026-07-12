@@ -1,0 +1,65 @@
+schema acme.logistics.shipping @xml.namespace("http://acme.example/logistics/shipping/1.0")
+
+/// A shipment moving through the logistics network.
+record Shipment {
+  /// Carrier-assigned tracking identifier
+  tracking_id: TrackingId @proto.field(1)
+  /// Where the shipment originates
+  origin: Address
+  /// Final delivery destination
+  destination: Address
+  /// Declared value in USD; absent for documents
+  declared_value: decimal?
+  /// Every parcel travelling under this shipment
+  parcels: Parcel+
+  /// Optional handling remarks from the shipper
+  remarks: string* @maxLength(500)
+  status: ShipmentStatus
+  /// When the label was created
+  created_at: datetime
+
+  /// Exactly one way to notify the recipient
+  choice notification {
+    email: string
+    sms_number: PhoneNumber
+  }
+}
+
+/// A single physical package.
+record Parcel {
+  weight_kg: Weight
+  /// Dimensions as W x H x D in centimetres
+  dimensions: string @pattern("\\d+x\\d+x\\d+")
+  fragile: bool
+}
+
+/// A postal address (simplified).
+record Address {
+  line1: string @maxLength(100)
+  line2: string?
+  city: string
+  postal_code: string @pattern("[0-9]{5}(-[0-9]{4})?")
+  country: CountryCode
+}
+
+/// Carrier tracking number: two letters, nine digits, two letters.
+type TrackingId = string @pattern("[A-Z]{2}\\d{9}[A-Z]{2}")
+
+/// E.164 formatted phone number.
+type PhoneNumber = string @pattern("\\+[1-9]\\d{1,14}")
+
+/// ISO 3166-1 alpha-2 country code.
+type CountryCode = string @length(2)
+
+/// Parcel weight in kilograms, bounded to what a courier will carry.
+type Weight = float64 @minInclusive(0) @maxInclusive(70)
+
+enum ShipmentStatus {
+  /// Label created, not yet picked up
+  CREATED
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  /// Returned to sender after failed delivery attempts
+  RETURNED
+}

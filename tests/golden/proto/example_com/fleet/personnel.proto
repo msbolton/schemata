@@ -1,0 +1,86 @@
+// Generated from personnel.xsd
+syntax = "proto3";
+
+package example_com.fleet.personnel;
+
+import "example_com/fleet/common.proto";
+
+// Personnel rank or grade.
+enum RankSimpleType {
+  // Unspecified/unknown value.
+  RANK_UNKNOWN = 0;
+  RANK_E1 = 1;
+  RANK_E2 = 2;
+  RANK_E3 = 3;
+  RANK_E4 = 4;
+  RANK_E5 = 5;
+  RANK_E6 = 6;
+  RANK_E7 = 7;
+  RANK_E8 = 8;
+  RANK_E9 = 9;
+  RANK_O1 = 10;
+  RANK_O2 = 11;
+  RANK_O3 = 12;
+  RANK_O4 = 13;
+  RANK_O5 = 14;
+  RANK_O6 = 15;
+  RANK_CIVILIAN = 16;
+  RANK_CONTRACTOR = 17;
+}
+
+enum ClearanceLevelSimpleType {
+  // Unspecified/unknown value.
+  CLEARANCE_LEVEL_UNKNOWN = 0;
+  CLEARANCE_LEVEL_NONE = 1;
+  CLEARANCE_LEVEL_CONFIDENTIAL = 2;
+  CLEARANCE_LEVEL_SECRET = 3;
+  CLEARANCE_LEVEL_TOP_SECRET = 4;
+}
+
+enum AssignmentRoleSimpleType {
+  // Unspecified/unknown value.
+  ASSIGNMENT_ROLE_UNKNOWN = 0;
+  ASSIGNMENT_ROLE_PRIMARY_OPERATOR = 1;
+  ASSIGNMENT_ROLE_SECONDARY_OPERATOR = 2;
+  ASSIGNMENT_ROLE_CREW_MEMBER = 3;
+  ASSIGNMENT_ROLE_MAINTENANCE_LEAD = 4;
+}
+
+// A person in the fleet management system. Extends IdentifiableType
+//         for identifier and timestamp fields.
+message PersonType {
+  // Base type: IdentifiableType
+  example_com.fleet.common.IdentifiableType identifiable = 1;
+  string service_id = 2;
+  string last_name = 3;
+  string first_name = 4;
+  example_com.fleet.personnel.RankSimpleType rank = 5;
+  example_com.fleet.personnel.ClearanceLevelSimpleType clearance_level = 6;
+  optional string callsign = 7;
+  repeated example_com.fleet.personnel.QualificationType qualification = 8;
+  optional example_com.fleet.personnel.VehicleAssignmentType current_assignment = 9;
+}
+
+// A qualification or certification held by a person,
+//         such as a vehicle operation license or special training.
+message QualificationType {
+  string qualification_name = 1;
+  string issued_date = 2;
+  optional string expiration_date = 3;
+  optional string issuing_authority = 4;
+  oneof qualification_category_abstract {
+    string operator_license = 5;
+    string maintenance_certification = 6;
+    string safety_training = 7;
+  }
+}
+
+// Associates a person with a vehicle they are assigned to operate.
+//         Exercises cross-namespace type references.
+message VehicleAssignmentType {
+  // Reference to the assigned vehicle's identifier.
+  string vehicle_ref = 1;
+  example_com.fleet.personnel.AssignmentRoleSimpleType role = 2;
+  string effective_date = 3;
+  optional string expiration_date = 4;
+}

@@ -1,0 +1,79 @@
+schema example_com.fleet.personnel @xml.namespace("http://example.com/fleet/personnel") @source("personnel.xsd")
+
+/// Personnel rank or grade.
+enum RankSimpleType {
+  E1
+  E2
+  E3
+  E4
+  E5
+  E6
+  E7
+  E8
+  E9
+  O1
+  O2
+  O3
+  O4
+  O5
+  O6
+  CIVILIAN
+  CONTRACTOR
+}
+
+enum ClearanceLevelSimpleType {
+  NONE
+  CONFIDENTIAL
+  SECRET
+  TOP_SECRET
+}
+
+/// A 10-digit service identification number.
+type ServiceIdType = string @pattern("[0-9]{10}")
+
+enum AssignmentRoleSimpleType {
+  PRIMARY_OPERATOR
+  SECONDARY_OPERATOR
+  CREW_MEMBER
+  MAINTENANCE_LEAD
+}
+
+/// A person in the fleet management system. Extends IdentifiableType
+///         for identifier and timestamp fields.
+record PersonType {
+  /// Base type: IdentifiableType
+  identifiable: example_com.fleet.common.IdentifiableType
+  service_id: ServiceIdType
+  last_name: example_com.fleet.common.ShortStringType
+  first_name: example_com.fleet.common.ShortStringType
+  rank: example_com.fleet.personnel.RankSimpleType
+  clearance_level: example_com.fleet.personnel.ClearanceLevelSimpleType
+  callsign: example_com.fleet.common.CallsignType?
+  qualification: example_com.fleet.personnel.QualificationType*
+  current_assignment: example_com.fleet.personnel.VehicleAssignmentType?
+}
+
+/// A qualification or certification held by a person,
+///         such as a vehicle operation license or special training.
+record QualificationType {
+  qualification_name: example_com.fleet.common.ShortStringType
+  issued_date: date
+  expiration_date: date?
+  issuing_authority: example_com.fleet.common.ShortStringType?
+
+  choice qualification_category_abstract {
+    operator_license: string
+    maintenance_certification: string
+    safety_training: string
+  }
+}
+
+/// Associates a person with a vehicle they are assigned to operate.
+///         Exercises cross-namespace type references.
+record VehicleAssignmentType {
+  /// Reference to the assigned vehicle's identifier.
+  vehicle_ref: example_com.fleet.common.UuidType
+  role: example_com.fleet.personnel.AssignmentRoleSimpleType
+  effective_date: date
+  expiration_date: date?
+}

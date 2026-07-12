@@ -1,0 +1,68 @@
+schema example_com.fleet.vehicle @xml.namespace("http://example.com/fleet/vehicle") @source("vehicle.xsd")
+
+enum MaintenanceCategorySimpleType {
+  SCHEDULED
+  UNSCHEDULED
+  EMERGENCY
+  INSPECTION
+  MODIFICATION
+}
+
+/// A tracked vehicle in the fleet. Extends IdentifiableType to inherit
+///         identifier and timestamp fields.
+record VehicleType {
+  /// Base type: IdentifiableType
+  identifiable: example_com.fleet.common.IdentifiableType
+  callsign: example_com.fleet.common.CallsignType
+  make: example_com.fleet.common.ShortStringType
+  model: example_com.fleet.common.ShortStringType
+  year_of_manufacture: string?
+  fuel_type: example_com.fleet.common.FuelTypeSimpleType
+  max_range_km: example_com.fleet.common.PositiveDistanceType?
+  current_status: example_com.fleet.common.StatusCodeType
+  home_location: example_com.fleet.common.CoordinateType?
+
+  choice vehicle_category_abstract {
+    ground_vehicle: string
+    air_vehicle: string
+    water_vehicle: string
+  }
+
+  choice vehicle_capability_abstract {
+    cargo_capability: string
+    passenger_capability: string
+    towing_capability: string
+  }
+
+  maintenance_history: example_com.fleet.vehicle.MaintenanceRecordType*
+}
+
+/// A record of a maintenance action performed on a vehicle.
+record MaintenanceRecordType {
+  record_id: example_com.fleet.common.UuidType
+  performed_date_time: google.protobuf.Timestamp
+  category: example_com.fleet.vehicle.MaintenanceCategorySimpleType
+  summary: example_com.fleet.common.ShortStringType
+  details: example_com.fleet.common.DescriptionType?
+  cost_usd: float64?
+  parts_replaced: example_com.fleet.common.ShortStringType*
+  next_scheduled_date: date?
+}
+
+/// The condition of a vehicle, reported either as a structured assessment
+///         or as a free-text note. Exercises the xs:choice compositor pattern.
+record VehicleConditionType {
+  reported_date_time: google.protobuf.Timestamp
+
+  choice structured_assessment_choice {
+    structured_assessment: example_com.fleet.vehicle.StructuredAssessmentType
+    free_text_note: example_com.fleet.common.DescriptionType
+  }
+}
+
+record StructuredAssessmentType {
+  overall_status: example_com.fleet.common.StatusCodeSimpleType
+  fuel_level_percent: example_com.fleet.common.PercentageType
+  odometer_km: uint64
+  deficiencies: example_com.fleet.common.ShortStringType*
+}

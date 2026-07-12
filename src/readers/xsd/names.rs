@@ -1,7 +1,7 @@
 //! Utilities for working with XML qualified names, namespace prefixes,
 //! and name transformations.
 
-use crate::xsd::model::{NamespaceUri, QName};
+use crate::readers::xsd::model::{NamespaceUri, QName};
 use std::collections::HashMap;
 
 /// Well-known XML Schema namespace.

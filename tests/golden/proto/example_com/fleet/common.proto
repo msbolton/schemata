@@ -1,0 +1,65 @@
+// Generated from types.xsd
+syntax = "proto3";
+
+package example_com.fleet.common;
+
+// Operational readiness status of an asset.
+enum StatusCodeSimpleType {
+  // Unspecified/unknown value.
+  STATUS_CODE_UNKNOWN = 0;
+  STATUS_CODE_OPERATIONAL = 1;
+  STATUS_CODE_DEGRADED = 2;
+  STATUS_CODE_NON_OPERATIONAL = 3;
+  STATUS_CODE_IN_MAINTENANCE = 4;
+  STATUS_CODE_DECOMMISSIONED = 5;
+}
+
+// Priority classification for tasks and missions.
+enum PriorityLevelSimpleType {
+  // Unspecified/unknown value.
+  PRIORITY_LEVEL_UNKNOWN = 0;
+  PRIORITY_LEVEL_CRITICAL = 1;
+  PRIORITY_LEVEL_HIGH = 2;
+  PRIORITY_LEVEL_MEDIUM = 3;
+  PRIORITY_LEVEL_LOW = 4;
+  PRIORITY_LEVEL_ROUTINE = 5;
+}
+
+enum FuelTypeSimpleType {
+  // Unspecified/unknown value.
+  FUEL_TYPE_UNKNOWN = 0;
+  FUEL_TYPE_DIESEL = 1;
+  FUEL_TYPE_GASOLINE = 2;
+  FUEL_TYPE_JET_A = 3;
+  FUEL_TYPE_ELECTRIC = 4;
+  FUEL_TYPE_HYBRID = 5;
+}
+
+// Abstract base type for any entity with a unique identifier and timestamps.
+//         All domain types extend this.
+message IdentifiableType {
+  string identifier = 1;
+  google.protobuf.Timestamp created_date_time = 2;
+  optional google.protobuf.Timestamp modified_date_time = 3;
+}
+
+// A WGS-84 geographic coordinate with optional altitude.
+message CoordinateType {
+  double latitude = 1;
+  double longitude = 2;
+  optional double altitude_meters = 3;
+}
+
+// An axis-aligned geographic bounding box.
+message BoundingBoxType {
+  example_com.fleet.common.CoordinateType south_west = 1;
+  example_com.fleet.common.CoordinateType north_east = 2;
+}
+
+// A wrapper around StatusCodeSimpleType that adds an optional source attribute.
+//         Exercises the simpleContent/extension pattern.
+message StatusCodeType {
+  example_com.fleet.common.StatusCodeSimpleType value = 1;
+  string source = 2;
+  optional double confidence = 3;
+}

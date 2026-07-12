@@ -1,0 +1,92 @@
+schema example_com.fleet.telemetry @xml.namespace("http://example.com/fleet/telemetry") @source("telemetry.xsd")
+
+/// OBD-II style diagnostic trouble code.
+///         Format: one letter followed by four digits (e.g. P0301, B0100).
+type DiagnosticCodeType = string @pattern("[PBCU][0-9]{4}")
+
+enum SeveritySimpleType {
+  INFO
+  WARNING
+  ERROR
+  CRITICAL
+}
+
+/// A temperature in degrees Celsius, -273.15 to 1000.
+type TemperatureCelsiusType = float64 @minInclusive("-273.15") @maxInclusive(1000)
+
+/// A timestamped position report for a vehicle, including heading and speed.
+record PositionReportType {
+  vehicle_ref: example_com.fleet.common.UuidType
+  timestamp: google.protobuf.Timestamp
+  position: example_com.fleet.common.CoordinateType
+  heading_degrees: float64?
+  speed_kmh: float64?
+  accuracy: example_com.fleet.telemetry.PositionAccuracyType?
+}
+
+record PositionAccuracyType {
+  horizontal_error_meters: float64
+  vertical_error_meters: float64?
+  satellite_count: uint64?
+}
+
+/// Engine health and diagnostic data collected from the vehicle's onboard systems.
+record EngineDiagnosticsType {
+  vehicle_ref: example_com.fleet.common.UuidType
+  timestamp: google.protobuf.Timestamp
+  engine_rpm: uint64?
+  coolant_temperature: TemperatureCelsiusType?
+  oil_pressure_k_pa: float64?
+  fuel_level_percent: example_com.fleet.common.PercentageType?
+  battery_voltage: float64?
+  active_fault: example_com.fleet.telemetry.DiagnosticFaultType*
+}
+
+record DiagnosticFaultType {
+  code: DiagnosticCodeType
+  severity: example_com.fleet.telemetry.SeveritySimpleType
+  description: example_com.fleet.common.ShortStringType?
+  first_occurrence: google.protobuf.Timestamp
+  occurrence_count: uint64
+}
+
+/// Abstract base for all sensor readings. Concrete subtypes provide
+///         the measurement-specific fields. Exercises abstract complex type
+///         with multiple concrete extensions.
+record SensorReadingType {
+  sensor_id: example_com.fleet.common.UuidType
+  timestamp: google.protobuf.Timestamp
+  vehicle_ref: example_com.fleet.common.UuidType
+}
+
+/// A temperature sensor reading.
+record TemperatureReadingType {
+  /// Base type: SensorReadingType
+  sensor_reading: example_com.fleet.telemetry.SensorReadingType
+  value_celsius: TemperatureCelsiusType
+  sensor_location: example_com.fleet.common.ShortStringType?
+}
+
+record PressureReadingType {
+  /// Base type: SensorReadingType
+  sensor_reading: example_com.fleet.telemetry.SensorReadingType
+  value_k_pa: float64
+  sensor_location: example_com.fleet.common.ShortStringType?
+}
+
+record VoltageReadingType {
+  /// Base type: SensorReadingType
+  sensor_reading: example_com.fleet.telemetry.SensorReadingType
+  value_volts: float64
+  circuit_name: example_com.fleet.common.ShortStringType?
+}
+
+/// A batch of telemetry data collected over a time window.
+///         Groups position reports, diagnostics, and sensor readings.
+record TelemetryBatchType {
+  batch_id: example_com.fleet.common.UuidType
+  collection_start: google.protobuf.Timestamp
+  collection_end: google.protobuf.Timestamp
+  position_report: example_com.fleet.telemetry.PositionReportType*
+  engine_diagnostics: example_com.fleet.telemetry.EngineDiagnosticsType*
+}

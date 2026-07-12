@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::xsd::model::*;
+use crate::readers::xsd::model::*;
 
 // ---------------------------------------------------------------------------
 // TypeRegistry
