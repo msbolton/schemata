@@ -39,6 +39,7 @@ pub fn emit(schema: &Schema) -> String {
 fn emit_doc(doc: &Option<String>, indent: &str, out: &mut String) {
     if let Some(doc) = doc {
         for line in doc.lines() {
+            let line = line.trim_end();
             out.push_str(indent);
             if line.is_empty() {
                 out.push_str("///");
@@ -187,5 +188,30 @@ enum PersonStatus {
         let out = emit(&schema);
         assert!(out.contains("/// line one\n/// line two\n"));
         assert_eq!(parse(&out).unwrap(), schema);
+    }
+
+    #[test]
+    fn whitespace_only_doc_lines_round_trip() {
+        use crate::ir::model::*;
+        let schema = Schema {
+            name: "a".into(),
+            annotations: vec![],
+            imports: vec![],
+            decls: vec![Decl::Record(Record {
+                name: "R".into(),
+                doc: Some("Para one.\n   \nPara two.".into()),
+                annotations: vec![],
+                members: vec![],
+            })],
+            source_path: None,
+        };
+        let reparsed = crate::ir::syntax::parser::parse(&emit(&schema)).unwrap();
+        let Decl::Record(r) = &reparsed.decls[0] else {
+            panic!()
+        };
+        // trailing whitespace is normalized away; the blank separator line survives
+        assert_eq!(r.doc.as_deref(), Some("Para one.\n\nPara two."));
+        // and the emitted text itself contains no trailing whitespace
+        assert!(!emit(&schema).lines().any(|l| l != l.trim_end()));
     }
 }

@@ -177,8 +177,19 @@ fn parse_annotation(node: &Node) -> XsdAnnotation {
                     documentation: None,
                 };
             }
+            // Trim trailing whitespace from each interior line (preserving
+            // leading indentation) so whitespace-only lines normalize to
+            // empty lines. This keeps the DSL emitter/lexer round-trip
+            // exact: the lexer already trims trailing whitespace per doc
+            // line, so a source that doesn't would fail `parse(emit(x)) ==
+            // x`.
+            let normalized = text
+                .lines()
+                .map(|line| line.trim_end())
+                .collect::<Vec<_>>()
+                .join("\n");
             return XsdAnnotation {
-                documentation: Some(text.to_string()),
+                documentation: Some(normalized),
             };
         }
     }
@@ -1030,5 +1041,38 @@ mod tests {
         let schema = parse_inline(EXAMPLE_CORE_XSD);
         // 10 import directives
         assert_eq!(schema.imports.len(), 10);
+    }
+
+    // -----------------------------------------------------------------------
+    // documentation normalization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn documentation_whitespace_only_interior_line_normalizes_to_empty() {
+        const XSD: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="http://example.org/doc/1.0"
+           xmlns="http://example.org/doc/1.0"
+           elementFormDefault="qualified">
+  <xs:complexType name="Thing">
+    <xs:annotation>
+      <xs:documentation>Para one.
+   	  
+Para two.</xs:documentation>
+    </xs:annotation>
+    <xs:sequence/>
+  </xs:complexType>
+</xs:schema>
+"#;
+        let schema = parse_inline(XSD);
+        let ct = schema
+            .complex_types
+            .iter()
+            .find(|c| c.name.as_deref() == Some("Thing"))
+            .expect("Thing not found");
+        assert_eq!(
+            ct.annotation.documentation.as_deref(),
+            Some("Para one.\n\nPara two.")
+        );
     }
 }

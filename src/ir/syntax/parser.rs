@@ -143,16 +143,25 @@ impl Parser {
         // `@source("file.xsd")` records the original source file; it lives in
         // `Schema::source_path`, not in the annotation list.
         let mut source_path = None;
+        let mut source_error = None;
         annotations.retain(|a| {
             if a.name == "source" {
-                if let Some(AnnotationValue::Str(s)) = a.args.first() {
-                    source_path = Some(std::path::PathBuf::from(s));
+                match a.args.as_slice() {
+                    [AnnotationValue::Str(s)] => {
+                        source_path = Some(std::path::PathBuf::from(s));
+                    }
+                    _ => {
+                        source_error = Some(());
+                    }
                 }
                 false
             } else {
                 true
             }
         });
+        if source_error.is_some() {
+            return Err(self.err_here("`@source` expects a single string argument".into()));
+        }
 
         let mut decls = Vec::new();
         while self.peek().is_some() {
@@ -510,5 +519,11 @@ enum PersonStatus {
             panic!()
         };
         assert_eq!(r.members.len(), 2);
+    }
+
+    #[test]
+    fn malformed_source_annotation_errors() {
+        let err = parse("schema a @source(42)").unwrap_err();
+        assert!(err.message.contains("@source"), "got: {}", err.message);
     }
 }
