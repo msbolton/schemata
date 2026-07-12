@@ -12,8 +12,8 @@ use self::profile::SchemaProfile;
 use std::collections::BTreeSet;
 
 use crate::ir::model::{
-    Annotation, Cardinality, Choice, Decl, EnumDecl, EnumValue, Field, Member, Primitive, Record,
-    Schema, TypeRef,
+    Alias, Annotation, AnnotationValue, Cardinality, Choice, Decl, EnumDecl, EnumValue, Field,
+    Member, Primitive, Record, Schema, TypeRef,
 };
 use crate::readers::xsd::model::*;
 use crate::readers::xsd::names::{STRUCTURES_NAMESPACE, XS_NAMESPACE};
@@ -49,10 +49,10 @@ pub fn transform_schema(
 
     let mut decls = Vec::new();
 
-    // Transform simple types (enums, patterns, etc.).
+    // Transform simple types (enums, constraint aliases, etc.).
     for st in &schema.simple_types {
-        if let Some(enum_decl) = ctx.transform_simple_type(st) {
-            decls.push(Decl::Enum(enum_decl));
+        if let Some(decl) = ctx.transform_simple_type(st) {
+            decls.push(decl);
         }
     }
 
@@ -105,6 +105,15 @@ fn type_ref_from_type_string(s: &str) -> TypeRef {
     match s.rsplit_once('.') {
         Some((pkg, name)) => TypeRef::named(Some(pkg), name),
         None => TypeRef::named(None, s),
+    }
+}
+
+/// Convert a raw XSD range facet value into an annotation argument:
+/// an integer when it parses as one, the raw string otherwise (e.g. "-273.15").
+fn range_arg(v: &str) -> AnnotationValue {
+    match v.parse::<i64>() {
+        Ok(n) => AnnotationValue::Int(n),
+        Err(_) => AnnotationValue::Str(v.to_string()),
     }
 }
 
@@ -185,15 +194,81 @@ impl<'a> TransformContext<'a> {
     // Simple type -> IR enum
     // -----------------------------------------------------------------------
 
-    /// Transform a simple type into an IR enum if it has enumeration variants.
-    /// For pattern-only or other restriction types, returns None (they map
-    /// to their base primitive type at usage sites).
-    fn transform_simple_type(&self, st: &XsdSimpleType) -> Option<EnumDecl> {
+    /// Transform a simple type into an IR declaration.
+    ///
+    /// Enumeration variants become an [`EnumDecl`]. Pattern, range, and
+    /// length restrictions become an [`Alias`] to the base type carrying the
+    /// facets as annotations. Lists, unions, and plain restrictions map to
+    /// their base primitive type at usage sites (no declaration).
+    fn transform_simple_type(&mut self, st: &XsdSimpleType) -> Option<Decl> {
         match &st.content {
-            SimpleTypeContent::Enumeration { variants, .. } => {
-                Some(self.build_enum(&st.name, variants, st.annotation.documentation.as_deref()))
+            SimpleTypeContent::Enumeration { variants, .. } => Some(Decl::Enum(self.build_enum(
+                &st.name,
+                variants,
+                st.annotation.documentation.as_deref(),
+            ))),
+            SimpleTypeContent::Pattern { base, pattern } => {
+                let annotations = vec![Annotation::str("pattern", pattern)];
+                Some(Decl::Alias(self.build_alias(st, base, annotations)))
+            }
+            SimpleTypeContent::Range {
+                base,
+                min_inclusive,
+                max_inclusive,
+                min_exclusive,
+                max_exclusive,
+            } => {
+                let mut annotations = Vec::new();
+                let facets = [
+                    ("minInclusive", min_inclusive),
+                    ("maxInclusive", max_inclusive),
+                    ("minExclusive", min_exclusive),
+                    ("maxExclusive", max_exclusive),
+                ];
+                for (name, value) in facets {
+                    if let Some(v) = value {
+                        annotations.push(Annotation::new(name, vec![range_arg(v)]));
+                    }
+                }
+                Some(Decl::Alias(self.build_alias(st, base, annotations)))
+            }
+            SimpleTypeContent::LengthRestriction {
+                base,
+                min_length,
+                max_length,
+                length,
+            } => {
+                let mut annotations = Vec::new();
+                let facets = [
+                    ("minLength", min_length),
+                    ("maxLength", max_length),
+                    ("length", length),
+                ];
+                for (name, value) in facets {
+                    if let Some(n) = value {
+                        annotations
+                            .push(Annotation::new(name, vec![AnnotationValue::Int(*n as i64)]));
+                    }
+                }
+                Some(Decl::Alias(self.build_alias(st, base, annotations)))
             }
             _ => None,
+        }
+    }
+
+    /// Build an IR alias for a constrained simple type. The target is
+    /// whatever the base type maps to (primitive or named type).
+    fn build_alias(
+        &mut self,
+        st: &XsdSimpleType,
+        base: &QName,
+        annotations: Vec<Annotation>,
+    ) -> Alias {
+        Alias {
+            name: st.name.clone(),
+            doc: st.annotation.documentation.clone(),
+            target: self.resolve_type_ref(base),
+            annotations,
         }
     }
 
@@ -758,17 +833,25 @@ impl<'a> TransformContext<'a> {
             }
         }
 
-        // Rule 12: Check if it's a simple type with pattern only -> string.
+        // Rule 12: Check if it's a simple type.
         if let Some(st) = self.registry.resolve_simple_type(qname) {
             match &st.content {
-                SimpleTypeContent::Pattern { .. } => return "string".to_string(),
                 SimpleTypeContent::Enumeration { .. } => {
                     // Reference to an enum type.
                     return self.qualified_type_name(qname, &st.name);
                 }
-                SimpleTypeContent::LengthRestriction { base, .. }
-                | SimpleTypeContent::Range { base, .. }
-                | SimpleTypeContent::Restriction { base, .. } => {
+                // Constrained simple types are declared as aliases in their
+                // defining schema — reference them by name (unqualified when
+                // local, qualified with import tracking otherwise).
+                SimpleTypeContent::Pattern { .. }
+                | SimpleTypeContent::Range { .. }
+                | SimpleTypeContent::LengthRestriction { .. } => {
+                    if qname.namespace == self.current_ns {
+                        return st.name.clone();
+                    }
+                    return self.qualified_type_name(qname, &st.name);
+                }
+                SimpleTypeContent::Restriction { base, .. } => {
                     // Collapse to the base primitive type.
                     return self.resolve_type_name(base);
                 }
@@ -1355,6 +1438,198 @@ mod tests {
             schemas.push((schema, PathBuf::from("test.xsd")));
         }
         build_reg(schemas)
+    }
+
+    fn aliases(schema: &Schema) -> Vec<&crate::ir::model::Alias> {
+        schema
+            .decls
+            .iter()
+            .filter_map(|d| match d {
+                Decl::Alias(a) => Some(a),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pattern_simple_type_becomes_alias_with_annotation() {
+        let xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <xs:schema targetNamespace="http://example.com/pat"
+            xmlns:p="http://example.com/pat"
+            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:simpleType name="SSNType">
+            <xs:restriction base="xs:string">
+              <xs:pattern value="\d{3}-\d{2}-\d{4}"/>
+            </xs:restriction>
+          </xs:simpleType>
+          <xs:complexType name="PersonType">
+            <xs:sequence>
+              <xs:element name="Ssn" type="p:SSNType"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:schema>"#;
+
+        let reg = generic_registry(&[xsd]);
+        let ns = NamespaceUri("http://example.com/pat".to_string());
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+
+        let alias = aliases(&schema)
+            .into_iter()
+            .find(|a| a.name == "SSNType")
+            .expect("should have SSNType alias");
+        assert_eq!(alias.target, TypeRef::Primitive(Primitive::String));
+        assert_eq!(
+            alias.annotations,
+            vec![Annotation::str("pattern", r"\d{3}-\d{2}-\d{4}")]
+        );
+
+        let rec = find_record(&schema, "PersonType").expect("should have PersonType record");
+        let ssn = direct_fields(rec)
+            .into_iter()
+            .find(|f| f.name == "ssn")
+            .expect("should have ssn field");
+        assert_eq!(ssn.ty, TypeRef::named(None, "SSNType"));
+    }
+
+    #[test]
+    fn range_simple_type_becomes_alias_with_int_annotations() {
+        let xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <xs:schema targetNamespace="http://example.com/rng"
+            xmlns:r="http://example.com/rng"
+            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:simpleType name="PercentType">
+            <xs:restriction base="xs:int">
+              <xs:minInclusive value="0"/>
+              <xs:maxInclusive value="100"/>
+            </xs:restriction>
+          </xs:simpleType>
+          <xs:complexType name="ScoreType">
+            <xs:sequence>
+              <xs:element name="Percent" type="r:PercentType"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:schema>"#;
+
+        let reg = generic_registry(&[xsd]);
+        let ns = NamespaceUri("http://example.com/rng".to_string());
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+
+        let alias = aliases(&schema)
+            .into_iter()
+            .find(|a| a.name == "PercentType")
+            .expect("should have PercentType alias");
+        assert_eq!(alias.target, TypeRef::Primitive(Primitive::Int32));
+        assert_eq!(
+            alias.annotations,
+            vec![
+                Annotation::new("minInclusive", vec![AnnotationValue::Int(0)]),
+                Annotation::new("maxInclusive", vec![AnnotationValue::Int(100)]),
+            ]
+        );
+
+        let rec = find_record(&schema, "ScoreType").expect("should have ScoreType record");
+        let pct = direct_fields(rec)
+            .into_iter()
+            .find(|f| f.name == "percent")
+            .expect("should have percent field");
+        assert_eq!(pct.ty, TypeRef::named(None, "PercentType"));
+    }
+
+    #[test]
+    fn length_restriction_simple_type_becomes_alias_with_length_annotations() {
+        let xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <xs:schema targetNamespace="http://example.com/len"
+            xmlns:l="http://example.com/len"
+            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:simpleType name="CodeType">
+            <xs:restriction base="xs:string">
+              <xs:minLength value="2"/>
+              <xs:maxLength value="8"/>
+            </xs:restriction>
+          </xs:simpleType>
+          <xs:complexType name="ItemType">
+            <xs:sequence>
+              <xs:element name="Code" type="l:CodeType"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:schema>"#;
+
+        let reg = generic_registry(&[xsd]);
+        let ns = NamespaceUri("http://example.com/len".to_string());
+        let schema = transform_schema(&ns, &reg, SchemaProfile::Generic).unwrap();
+
+        let alias = aliases(&schema)
+            .into_iter()
+            .find(|a| a.name == "CodeType")
+            .expect("should have CodeType alias");
+        assert_eq!(alias.target, TypeRef::Primitive(Primitive::String));
+        assert_eq!(
+            alias.annotations,
+            vec![
+                Annotation::new("minLength", vec![AnnotationValue::Int(2)]),
+                Annotation::new("maxLength", vec![AnnotationValue::Int(8)]),
+            ]
+        );
+
+        let rec = find_record(&schema, "ItemType").expect("should have ItemType record");
+        let code = direct_fields(rec)
+            .into_iter()
+            .find(|f| f.name == "code")
+            .expect("should have code field");
+        assert_eq!(code.ty, TypeRef::named(None, "CodeType"));
+    }
+
+    #[test]
+    fn cross_namespace_facet_simple_type_is_qualified_and_imported() {
+        let common_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <xs:schema targetNamespace="http://example.com/xcommon"
+            xmlns:c="http://example.com/xcommon"
+            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:simpleType name="UuidType">
+            <xs:restriction base="xs:token">
+              <xs:pattern value="[0-9a-f]{8}"/>
+            </xs:restriction>
+          </xs:simpleType>
+        </xs:schema>"#;
+        let user_xsd = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <xs:schema targetNamespace="http://example.com/xuser"
+            xmlns:c="http://example.com/xcommon"
+            xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:import namespace="http://example.com/xcommon"/>
+          <xs:complexType name="RefType">
+            <xs:sequence>
+              <xs:element name="Id" type="c:UuidType"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:schema>"#;
+
+        let reg = generic_registry(&[common_xsd, user_xsd]);
+
+        // The alias lives in the defining schema.
+        let common_ns = NamespaceUri("http://example.com/xcommon".to_string());
+        let common = transform_schema(&common_ns, &reg, SchemaProfile::Generic).unwrap();
+        assert!(
+            aliases(&common).iter().any(|a| a.name == "UuidType"),
+            "common schema should declare the UuidType alias"
+        );
+
+        // The referencing schema uses a qualified ref and tracks the import.
+        let user_ns = NamespaceUri("http://example.com/xuser".to_string());
+        let user = transform_schema(&user_ns, &reg, SchemaProfile::Generic).unwrap();
+        let rec = find_record(&user, "RefType").expect("should have RefType record");
+        let id = direct_fields(rec)
+            .into_iter()
+            .find(|f| f.name == "id")
+            .expect("should have id field");
+        assert_eq!(
+            id.ty,
+            TypeRef::named(Some("example_com.xcommon"), "UuidType")
+        );
+        assert!(
+            user.imports.contains(&"example_com.xcommon".to_string()),
+            "should import the alias's package, got: {:?}",
+            user.imports
+        );
     }
 
     #[test]
