@@ -1,9 +1,10 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use crate::convert::Format;
 use crate::readers::xsd::transform::profile::SchemaProfile;
 
-/// schemata - XSD to Protocol Buffers converter for NIEM-based schemas
+/// schemata - schema converter with a rich intermediary language
 #[derive(Debug, Parser)]
 #[command(name = "schemata", version, about)]
 pub struct Cli {
@@ -13,18 +14,31 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Convert XSD schemas to Protocol Buffers definitions
+    /// Convert schemas between formats (via the schemata IR)
     Convert {
-        /// Path to the input XSD file or directory
+        /// Input file or directory (.xsd or .schemata; directories are scanned)
         #[arg(short, long)]
         input: PathBuf,
 
-        /// Output directory for generated .proto files
+        /// Output directory
         #[arg(short, long)]
         output: PathBuf,
 
-        /// Schema profile controlling NIEM-specific transforms
+        /// Input format (inferred from the input extension when omitted;
+        /// directories are inferred from their contents, defaulting to xsd)
+        #[arg(long, value_enum)]
+        from: Option<Format>,
+
+        /// Output format
+        #[arg(long, value_enum, default_value = "proto")]
+        to: Format,
+
+        /// Schema profile controlling NIEM-specific transforms (XSD input only)
         #[arg(long, value_enum, default_value_t = SchemaProfile::Niem)]
         profile: SchemaProfile,
+
+        /// Treat information-loss warnings as errors
+        #[arg(long)]
+        deny_warnings: bool,
     },
 }

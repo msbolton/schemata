@@ -4,13 +4,13 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use clap::Parser;
 use schemata::cli::{Cli, Command};
-use schemata::convert::SchemaReader;
+use schemata::convert::{Format, SchemaReader, SchemaWriter, Warning};
 use schemata::ir::validate::validate;
-use schemata::readers::xsd::transform::naming::package_to_import_path;
+use schemata::readers::schemata_reader::SchemataReader;
 use schemata::readers::xsd::transform::profile::SchemaProfile;
 use schemata::readers::xsd::XsdReader;
-use schemata::writers::proto::emitter::emit_proto_file;
-use schemata::writers::proto::lower::lower;
+use schemata::writers::proto::ProtoWriter;
+use schemata::writers::schemata_writer::SchemataWriter;
 use tracing_subscriber::EnvFilter;
 
 fn main() -> Result<()> {
@@ -24,33 +24,50 @@ fn main() -> Result<()> {
         Command::Convert {
             input,
             output,
+            from,
+            to,
             profile,
+            deny_warnings,
         } => {
-            tracing::info!(?input, ?output, ?profile, "starting conversion");
-            run_pipeline(&input, &output, profile)
+            tracing::info!(?input, ?output, ?from, ?to, ?profile, "starting conversion");
+            run_pipeline(&input, &output, from, to, profile, deny_warnings)
         }
     }
 }
 
-/// Run the full XSD-to-proto conversion pipeline: read XSD into IR,
-/// validate the IR, then lower and emit one proto file per schema.
-fn run_pipeline(input: &Path, output: &Path, profile: SchemaProfile) -> Result<()> {
-    // Stage 1: Read XSD files into IR schemas.
-    tracing::info!("stage 1: reading XSD into IR");
-    let reader = XsdReader { profile };
-    let (schemas, warnings) = reader.read(input)?;
-    for warning in &warnings {
-        tracing::warn!("{warning}");
-    }
-    tracing::info!(count = schemas.len(), "IR schemas produced");
+/// Run the conversion pipeline: read the input format into IR schemas,
+/// validate the IR, then write them out in the target format.
+fn run_pipeline(
+    input: &Path,
+    output: &Path,
+    from: Option<Format>,
+    to: Format,
+    profile: SchemaProfile,
+    deny_warnings: bool,
+) -> Result<()> {
+    let from = from
+        .or_else(|| Format::infer(input))
+        .or_else(|| infer_dir_format(input))
+        .context("cannot infer input format; pass --from")?;
 
+    let reader: Box<dyn SchemaReader> = match from {
+        Format::Xsd => Box::new(XsdReader { profile }),
+        Format::Schemata => Box::new(SchemataReader),
+        Format::Proto => anyhow::bail!("reading .proto is not supported yet"),
+    };
+    let writer: Box<dyn SchemaWriter> = match to {
+        Format::Proto => Box::new(ProtoWriter),
+        Format::Schemata => Box::new(SchemataWriter),
+        Format::Xsd => anyhow::bail!("writing .xsd is not supported yet"),
+    };
+
+    let (schemas, mut warnings) = reader.read(input)?;
+    tracing::info!(count = schemas.len(), "IR schemas produced");
     if schemas.is_empty() {
-        tracing::warn!("no schemas produced from {}", input.display());
+        tracing::warn!("no schemas found under {}", input.display());
         return Ok(());
     }
 
-    // Stage 2: Validate the IR.
-    tracing::info!("stage 2: validating IR");
     let errors = validate(&schemas);
     if !errors.is_empty() {
         for error in &errors {
@@ -59,44 +76,55 @@ fn run_pipeline(input: &Path, output: &Path, profile: SchemaProfile) -> Result<(
         anyhow::bail!("IR validation failed with {} error(s)", errors.len());
     }
 
-    // Stage 3: Lower each schema to proto and emit it.
-    tracing::info!("stage 3: writing proto files to {}", output.display());
     fs::create_dir_all(output)
         .with_context(|| format!("failed to create output directory {}", output.display()))?;
+    warnings.extend(writer.write(&schemas, output)?);
 
-    let mut written = 0usize;
-    for schema in &schemas {
-        let (proto_file, warnings) = lower(schema, &schemas)?;
-        for warning in &warnings {
-            tracing::warn!("{warning}");
-        }
+    report_warnings(&warnings, deny_warnings)
+}
 
-        // Edge case: skip empty proto files (no messages and no enums).
-        if proto_file.messages.is_empty() && proto_file.enums.is_empty() {
-            tracing::debug!(
-                schema = %schema.name,
-                "proto file has no messages or enums; skipping"
-            );
-            continue;
-        }
-
-        let rel_path = package_to_import_path(&proto_file.package);
-        let out_path = output.join(&rel_path);
-
-        // Create subdirectories as needed.
-        if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create directory {}", parent.display()))?;
-        }
-
-        let content = emit_proto_file(&proto_file);
-        fs::write(&out_path, &content)
-            .with_context(|| format!("failed to write {}", out_path.display()))?;
-
-        tracing::info!(path = %out_path.display(), "wrote proto file");
-        written += 1;
+/// Infer the input format of a directory from the files it contains
+/// (recursively): .xsd wins over .schemata; empty directories default to xsd.
+fn infer_dir_format(dir: &Path) -> Option<Format> {
+    if !dir.is_dir() {
+        return None;
     }
+    fn scan(dir: &Path, saw_schemata: &mut bool) -> bool {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                if scan(&p, saw_schemata) {
+                    return true;
+                }
+            } else {
+                match Format::infer(&p) {
+                    Some(Format::Xsd) => return true,
+                    Some(Format::Schemata) => *saw_schemata = true,
+                    _ => {}
+                }
+            }
+        }
+        false
+    }
+    let mut saw_schemata = false;
+    if scan(dir, &mut saw_schemata) {
+        Some(Format::Xsd)
+    } else if saw_schemata {
+        Some(Format::Schemata)
+    } else {
+        Some(Format::Xsd)
+    }
+}
 
-    tracing::info!(total = written, "conversion complete");
+fn report_warnings(warnings: &[Warning], deny: bool) -> Result<()> {
+    for warning in warnings {
+        tracing::warn!("{warning}");
+    }
+    if deny && !warnings.is_empty() {
+        anyhow::bail!("{} warning(s) with --deny-warnings set", warnings.len());
+    }
     Ok(())
 }

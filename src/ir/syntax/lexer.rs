@@ -8,7 +8,8 @@ pub enum TokenKind {
     Str(String),
     Int(i64),
     Float(f64),
-    /// One `///` doc-comment line (leading whitespace trimmed).
+    /// One `///` doc-comment line (one leading separator space and any
+    /// trailing whitespace stripped; interior indentation preserved).
     Doc(String),
     LBrace,
     RBrace,
@@ -73,8 +74,11 @@ pub fn lex(src: &str) -> Result<Vec<Token>, LexError> {
                 }
                 if is_doc {
                     let text: String = chars[start..end].iter().collect();
+                    // Strip exactly one leading space (the canonical `/// `
+                    // separator) so interior indentation survives round-trips.
+                    let text = text.strip_prefix(' ').unwrap_or(&text).trim_end();
                     tokens.push(Token {
-                        kind: TokenKind::Doc(text.trim().to_string()),
+                        kind: TokenKind::Doc(text.to_string()),
                         line: tline,
                         col: tcol,
                     });

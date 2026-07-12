@@ -14,6 +14,15 @@ pub fn emit(schema: &Schema) -> String {
         out.push(' ');
         out.push_str(&a.to_string());
     }
+    if let Some(source) = schema
+        .source_path
+        .as_deref()
+        .and_then(|p| p.file_name())
+        .and_then(|f| f.to_str())
+    {
+        out.push(' ');
+        out.push_str(&Annotation::str("source", source).to_string());
+    }
     out.push('\n');
 
     for decl in &schema.decls {
@@ -31,8 +40,12 @@ fn emit_doc(doc: &Option<String>, indent: &str, out: &mut String) {
     if let Some(doc) = doc {
         for line in doc.lines() {
             out.push_str(indent);
-            out.push_str("/// ");
-            out.push_str(line);
+            if line.is_empty() {
+                out.push_str("///");
+            } else {
+                out.push_str("/// ");
+                out.push_str(line);
+            }
             out.push('\n');
         }
     }

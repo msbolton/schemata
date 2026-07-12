@@ -138,7 +138,21 @@ impl Parser {
         }
         self.bump();
         let name = self.dotted_ident("schema name")?;
-        let annotations = self.annotations()?;
+        let mut annotations = self.annotations()?;
+
+        // `@source("file.xsd")` records the original source file; it lives in
+        // `Schema::source_path`, not in the annotation list.
+        let mut source_path = None;
+        annotations.retain(|a| {
+            if a.name == "source" {
+                if let Some(AnnotationValue::Str(s)) = a.args.first() {
+                    source_path = Some(std::path::PathBuf::from(s));
+                }
+                false
+            } else {
+                true
+            }
+        });
 
         let mut decls = Vec::new();
         while self.peek().is_some() {
@@ -160,12 +174,15 @@ impl Parser {
         let mut imports = self.imports;
         imports.sort();
         imports.dedup();
+        // Self-references and well-known `google.*` types are not imports of
+        // other IR schemas (matching what format readers record).
+        imports.retain(|i| *i != name && !i.starts_with("google."));
         Ok(Schema {
             name,
             annotations,
             imports,
             decls,
-            source_path: None,
+            source_path,
         })
     }
 
