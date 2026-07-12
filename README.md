@@ -30,6 +30,10 @@ enum PersonStatus {
 }
 ```
 
+A larger example covering the full language surface (cardinalities, choice
+groups, constrained type aliases, pinned field numbers) lives in
+[`examples/`](examples/).
+
 ## Installation
 
 ### Pre-built binaries
