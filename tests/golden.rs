@@ -75,3 +75,43 @@ fn xsd_to_proto_matches_golden() {
     ]);
     assert_dirs_equal(&golden, &out, "proto");
 }
+
+#[test]
+fn xsd_to_schemata_matches_golden() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let input = manifest_dir.join("schemas");
+    let golden = manifest_dir.join("tests/golden/schemata");
+
+    let out = tempdir("xsd_to_schemata");
+    let _guard = TempDirGuard(out.clone());
+    run_convert(&[
+        "convert",
+        "--input",
+        input.to_str().unwrap(),
+        "--output",
+        out.to_str().unwrap(),
+        "--to",
+        "schemata",
+    ]);
+    assert_dirs_equal(&golden, &out, "schemata");
+}
+
+#[test]
+fn schemata_to_proto_matches_proto_golden() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let input = manifest_dir.join("tests/golden/schemata");
+    let golden = manifest_dir.join("tests/golden/proto");
+
+    let out = tempdir("schemata_to_proto");
+    let _guard = TempDirGuard(out.clone());
+    run_convert(&[
+        "convert",
+        "--input",
+        input.to_str().unwrap(),
+        "--output",
+        out.to_str().unwrap(),
+        "--to",
+        "proto",
+    ]);
+    assert_dirs_equal(&golden, &out, "proto");
+}

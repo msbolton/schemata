@@ -2,7 +2,7 @@
 name = "schemata"
 version = "1.1.0"
 edition = "2021"
-description = "XSD to Protocol Buffers converter for NIEM-based schemas"
+description = "Schema converter with a rich intermediary language (XSD, Protocol Buffers, .schemata)"
 license = "MIT"
 repository = "https://github.com/msbolton/schemata"
 homepage = "https://github.com/msbolton/schemata"

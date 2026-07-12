@@ -1,0 +1,73 @@
+schema example_com.fleet.common @xml.namespace("http://example.com/fleet/common") @source("types.xsd")
+
+/// Operational readiness status of an asset.
+enum StatusCodeSimpleType {
+  OPERATIONAL
+  DEGRADED
+  NON_OPERATIONAL
+  IN_MAINTENANCE
+  DECOMMISSIONED
+}
+
+/// Priority classification for tasks and missions.
+enum PriorityLevelSimpleType {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  ROUTINE
+}
+
+enum FuelTypeSimpleType {
+  DIESEL
+  GASOLINE
+  JET_A
+  ELECTRIC
+  HYBRID
+}
+
+/// A UUID in 8-4-4-4-12 hex format.
+type UuidType = string @pattern("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+/// A string of at most 128 characters.
+type ShortStringType = string @maxLength(128)
+
+type DescriptionType = string @maxLength(4096)
+
+/// A decimal value between 0.0 and 100.0 inclusive.
+type PercentageType = float64 @minInclusive(0) @maxInclusive(100)
+
+/// A distance in meters, must be greater than zero.
+type PositiveDistanceType = float64 @minExclusive(0)
+
+/// An alphanumeric callsign, 2 to 12 characters.
+type CallsignType = string @pattern("[A-Z0-9\\-]+")
+
+/// Abstract base type for any entity with a unique identifier and timestamps.
+///         All domain types extend this.
+record IdentifiableType {
+  identifier: UuidType
+  created_date_time: google.protobuf.Timestamp
+  modified_date_time: google.protobuf.Timestamp?
+}
+
+/// A WGS-84 geographic coordinate with optional altitude.
+record CoordinateType {
+  latitude: float64
+  longitude: float64
+  altitude_meters: float64?
+}
+
+/// An axis-aligned geographic bounding box.
+record BoundingBoxType {
+  south_west: example_com.fleet.common.CoordinateType
+  north_east: example_com.fleet.common.CoordinateType
+}
+
+/// A wrapper around StatusCodeSimpleType that adds an optional source attribute.
+///         Exercises the simpleContent/extension pattern.
+record StatusCodeType {
+  value: example_com.fleet.common.StatusCodeSimpleType
+  source: string
+  confidence: PercentageType?
+}
